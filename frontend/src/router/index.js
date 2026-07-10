@@ -15,7 +15,7 @@ const routes = [
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/Dashboard/index.vue'), meta: { title: '看板', icon: 'Odometer' } },
       { path: 'staging', name: 'Staging', component: () => import('@/views/Staging/index.vue'), meta: { title: '全部订单', icon: 'Tickets' } },
       { path: 'taobao', name: 'Taobao', component: () => import('@/views/Taobao/index.vue'), meta: { title: '淘宝订单', icon: 'ShoppingCart' } },
-      { path: 'junfeng', name: 'Junfeng', component: () => import('@/views/Junfeng/index.vue'), meta: { title: '君丰订单', icon: 'Ship' } },
+      { path: 'shipment', name: 'Shipment', component: () => import('@/views/Shipment/index.vue'), meta: { title: '集运订单', icon: 'Ship' } },
       { path: 'misc', name: 'Misc', component: () => import('@/views/Misc/index.vue'), meta: { title: '杂项支出', icon: 'Money' } },
     ],
   },

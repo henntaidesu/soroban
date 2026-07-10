@@ -26,7 +26,7 @@ class Source(str, Enum):
     manual = "manual"
     imported = "imported"       # 从暂存表导入
     taobao_bot = "taobao_bot"
-    junfeng_bot = "junfeng_bot"
+    shipment_bot = "shipment_bot"
 
 
 class TaobaoStatus(str, Enum):
@@ -37,7 +37,7 @@ class TaobaoStatus(str, Enum):
     cancelled = "已取消"
 
 
-class JunfengStatus(str, Enum):
+class ShipmentStatus(str, Enum):
     packing = "打包中"
     shipped = "已发出"
     arrived = "已签收"
@@ -50,8 +50,13 @@ class StagingStatus(str, Enum):
     ignored = "已忽略"
 
 
-# 计入看板合计时要排除的状态（退款按负数记，取消整单剔除）
-CANCELLED_STATUSES = {TaobaoStatus.cancelled.value, JunfengStatus.cancelled.value}
+# 看板合计要排除的状态：取消/退款都不计入合计（金额与物品仍照常显示，只是不加总）。
+# 不再用「负数行」冲抵退款——打上退款/取消标记即自动不计入。
+EXCLUDED_STATUSES = {
+    TaobaoStatus.cancelled.value,
+    TaobaoStatus.refunded.value,
+    ShipmentStatus.cancelled.value,
+}
 
 
 # --- 共通基类：日期/备注/来源/付款人/乐观锁/软删/时间戳 + 金额输入与派生 --------
@@ -76,7 +81,7 @@ class LedgerBase(SQLModel):
     jpy_settled: Optional[int] = Field(default=None)
 
     def compute_money(self, extra_jpy: int = 0) -> None:
-        """用 Decimal 精确重算 jpy_auto / jpy_settled。extra_jpy 供君丰加特殊费。
+        """用 Decimal 精确重算 jpy_auto / jpy_settled。extra_jpy 供集运加特殊费。
         先把 cny/rate 量化到入库精度，保证派生日元与最终存储/展示值一致。"""
         if self.price_cny is not None and self.fx_rate is not None:
             cny = Decimal(self.price_cny).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -123,11 +128,11 @@ class TaobaoOrder(LedgerBase, table=True):
     express_no: Optional[str] = Field(default=None, index=True)   # 快递号（归组用）
     express_company: Optional[str] = None                    # 快递公司
     taobao_account: Optional[str] = Field(default=None, index=True)  # 淘宝账号（2个）
-    junfeng_order_id: Optional[int] = Field(
-        default=None, foreign_key="junfengorder.id", index=True
+    shipment_order_id: Optional[int] = Field(
+        default=None, foreign_key="shipmentorder.id", index=True
     )  # 可空 = 已买未集运
 
-    junfeng_order: Optional["JunfengOrder"] = Relationship(back_populates="taobao_orders")
+    shipment_order: Optional["ShipmentOrder"] = Relationship(back_populates="taobao_orders")
     items: list["OrderItem"] = Relationship(
         back_populates="taobao_order",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -143,29 +148,29 @@ class OrderItem(SQLModel, table=True):
     taobao_order: Optional[TaobaoOrder] = Relationship(back_populates="items")
 
 
-# --- 君丰订单 ---------------------------------------------------------------
+# --- 集运订单 ---------------------------------------------------------------
 
-class JunfengOrder(LedgerBase, table=True):
+class ShipmentOrder(LedgerBase, table=True):
     __table_args__ = (
         Index(
-            "ix_junfengorder_junfeng_no_active",
-            "junfeng_no",
+            "ix_shipmentorder_shipment_no_active",
+            "shipment_no",
             unique=True,
-            sqlite_where=text("junfeng_no IS NOT NULL AND deleted_at IS NULL"),
+            sqlite_where=text("shipment_no IS NOT NULL AND deleted_at IS NULL"),
         ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    junfeng_no: Optional[str] = Field(default=None)         # 君丰单号
+    shipment_no: Optional[str] = Field(default=None)         # 集运单号
     weight: Optional[Decimal] = Field(default=None, max_digits=8, decimal_places=2)  # 重量kg
     intl_tracking_no: Optional[str] = None                 # 国际运单号
-    status: str = Field(default=JunfengStatus.packing.value, index=True)
+    status: str = Field(default=ShipmentStatus.packing.value, index=True)
     special_fee_jpy: Optional[int] = Field(default=None)    # 特殊费（恒日元：关税/消费税等）
 
-    taobao_orders: list[TaobaoOrder] = Relationship(back_populates="junfeng_order")
+    taobao_orders: list[TaobaoOrder] = Relationship(back_populates="shipment_order")
 
     def compute_money(self, extra_jpy: int = 0) -> None:
-        # 君丰 jpy_auto = round(运费×汇率) + 特殊费_日元
+        # 集运 jpy_auto = round(运费×汇率) + 特殊费_日元
         super().compute_money(extra_jpy=(self.special_fee_jpy or 0) + extra_jpy)
 
 
@@ -197,7 +202,7 @@ class Setting(SQLModel, table=True):
 # --- 列布局（每个表的列顺序+宽度，存后端，所有人一致）------------------------
 
 class ColumnLayout(SQLModel, table=True):
-    table_name: str = Field(primary_key=True)       # taobao / junfeng / misc / staging
+    table_name: str = Field(primary_key=True)       # taobao / shipment / misc / staging
     columns_json: str = Field(default="[]")          # 有序 [{"key":..,"width":..}, ...]
     updated_at: dt.datetime = Field(default_factory=utcnow)
 

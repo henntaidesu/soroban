@@ -1,6 +1,6 @@
 """灌入演示数据。运行：python -m app.demo
 
-会建 admin（若无）+ 一批真实感的代购/集运数据：君丰订单、淘宝订单（含一单多物、
+会建 admin（若无）+ 一批真实感的代购/集运数据：集运订单、淘宝订单（含一单多物、
 退款、日元直付、已取消示例）、杂项、以及暂存页的待导入订单。已有淘宝数据则跳过。
 """
 
@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from .auth import hash_password
 from .database import create_db_and_tables, engine
 from .models import (
-    FxRate, JunfengOrder, MiscExpense, OrderItem, StagingItem, TaobaoOrder, TaobaoStaging, User,
+    FxRate, ShipmentOrder, MiscExpense, OrderItem, StagingItem, TaobaoOrder, TaobaoStaging, User,
 )
 
 D = lambda y, m, d: dt.date(y, m, d)  # noqa: E731
@@ -33,15 +33,15 @@ def main() -> None:
         if not s.exec(select(FxRate).where(FxRate.date == D(2026, 7, 9))).first():
             s.add(FxRate(date=D(2026, 7, 9), rate=Decimal("23.8642")))
 
-        # —— 君丰订单 ——
-        jf1 = JunfengOrder(date=D(2026, 6, 5), junfeng_no="JF-2606A", weight=Decimal("4.5"),
+        # —— 集运订单 ——
+        jf1 = ShipmentOrder(date=D(2026, 6, 5), shipment_no="JF-2606A", weight=Decimal("4.5"),
                            intl_tracking_no="LP00612345678", status="已签收",
                            price_cny=Decimal("180"), fx_rate=Decimal("20.5"), special_fee_jpy=1200,
                            note="含关税消费税")
-        jf2 = JunfengOrder(date=D(2026, 6, 20), junfeng_no="JF-2606B", weight=Decimal("2.1"),
+        jf2 = ShipmentOrder(date=D(2026, 6, 20), shipment_no="JF-2606B", weight=Decimal("2.1"),
                            intl_tracking_no="LP00612399999", status="已发出",
                            price_cny=Decimal("95"), fx_rate=Decimal("21"))
-        jf3 = JunfengOrder(date=D(2026, 7, 5), junfeng_no="JF-2607A", status="打包中")
+        jf3 = ShipmentOrder(date=D(2026, 7, 5), shipment_no="JF-2607A", status="打包中")
         for j in (jf1, jf2, jf3):
             j.compute_money()
             s.add(j)
@@ -69,9 +69,9 @@ def main() -> None:
             dict(date=D(2026, 7, 3), order_no="TB250703044", shop="谷子屋", taobao_account="acctA",
                  express_no="SF1006", price_cny="60", fx_rate="23.86", status="已付", jf=jf3.id,
                  items=[("吧唧/徽章", 10)]),
-            # 退款（负数照常计入）
+            # 退款：打退款标记，金额/物品照显，但不计入合计（不再用负数冲抵）
             dict(date=D(2026, 7, 4), order_no="TB250704050", shop="挂件小铺", taobao_account="acctA",
-                 price_cny="-25", fx_rate="23.86", status="退款", items=[("亚克力挂件(退款)", 1)]),
+                 price_cny="25", fx_rate="23.86", status="退款", items=[("亚克力挂件", 1)]),
             # 日元直付（只填覆盖日元）
             dict(date=D(2026, 7, 6), order_no="TB250706061", shop="日亚代付", taobao_account="acctB",
                  override=3500, status="已付", items=[("日亚补款", 1)]),
@@ -82,7 +82,7 @@ def main() -> None:
         for t in taobao:
             o = TaobaoOrder(
                 date=t["date"], order_no=t["order_no"], shop=t["shop"], taobao_account=t["taobao_account"],
-                express_no=t.get("express_no"), status=t["status"], junfeng_order_id=t.get("jf"),
+                express_no=t.get("express_no"), status=t["status"], shipment_order_id=t.get("jf"),
                 price_cny=Decimal(t["price_cny"]) if "price_cny" in t else None,
                 fx_rate=Decimal(t["fx_rate"]) if "fx_rate" in t else None,
                 jpy_override=t.get("override"),
@@ -96,7 +96,7 @@ def main() -> None:
             dict(date=D(2026, 6, 5), name="国际运费差价补款", price_cny="120", fx_rate="20.5", category="运费"),
             dict(date=D(2026, 6, 21), name="打包气泡膜", price_cny="30", fx_rate="21", category="包材"),
             dict(date=D(2026, 7, 1), name="煤炉出品手续费", override=800, category="手续费"),
-            dict(date=D(2026, 7, 8), name="超卖退款到账", override=-500, category="退款"),
+            dict(date=D(2026, 7, 8), name="关税补缴", override=650, category="税费"),
         ]
         for m in misc:
             e = MiscExpense(
@@ -128,7 +128,7 @@ def main() -> None:
             s.add(row)
 
         s.commit()
-        print("演示数据已灌入：3 君丰 / 9 淘宝 / 4 杂项 / 4 暂存待导入。")
+        print("演示数据已灌入：3 集运 / 9 淘宝 / 4 杂项 / 4 暂存待导入。")
 
 
 if __name__ == "__main__":

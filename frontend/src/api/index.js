@@ -18,12 +18,14 @@ export const taobaoApi = {
   remove: (id) => http.delete(`/taobao/${id}`),
 }
 
-export const junfengApi = {
-  list: (params) => http.get('/junfeng', { params }),
-  get: (id) => http.get(`/junfeng/${id}`),
-  create: (data) => http.post('/junfeng', data),
-  update: (id, data) => http.patch(`/junfeng/${id}`, data),
-  remove: (id) => http.delete(`/junfeng/${id}`),
+export const shipmentApi = {
+  list: (params) => http.get('/shipment', { params }),
+  get: (id) => http.get(`/shipment/${id}`),
+  create: (data) => http.post('/shipment', data),
+  update: (id, data) => http.patch(`/shipment/${id}`, data),
+  remove: (id) => http.delete(`/shipment/${id}`),
+  attachTaobao: (jfId, tbId) => http.post(`/shipment/${jfId}/taobao/${tbId}`),
+  detachTaobao: (jfId, tbId) => http.delete(`/shipment/${jfId}/taobao/${tbId}`),
 }
 
 export const miscApi = {

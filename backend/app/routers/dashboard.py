@@ -1,4 +1,4 @@
-"""看板聚合：对 jpy_settled 求和；排除软删与已取消（P4）。"""
+"""看板聚合：对 jpy_settled 求和；排除软删与不计入状态（取消/退款）（P4）。"""
 
 from collections import defaultdict
 
@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import CANCELLED_STATUSES, JunfengOrder, MiscExpense, TaobaoOrder
+from ..models import EXCLUDED_STATUSES, ShipmentOrder, MiscExpense, TaobaoOrder
 from ..schemas import DashboardRead, MonthTotal
 from ..services.fx import current_rate
 
@@ -16,13 +16,13 @@ router = APIRouter(
     prefix="/api/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)]
 )
 
-_CANCELLED = tuple(CANCELLED_STATUSES)
+_EXCLUDED = tuple(EXCLUDED_STATUSES)
 
 
 def _valid_conds(model, has_status: bool):
     conds = [model.deleted_at.is_(None)]
     if has_status:
-        conds.append(model.status.notin_(_CANCELLED))
+        conds.append(model.status.notin_(_EXCLUDED))   # 取消/退款不计入
     return conds
 
 
@@ -56,22 +56,22 @@ def _by_month(session: Session, model, has_status: bool, bucket: dict) -> None:
 @router.get("", response_model=DashboardRead)
 def dashboard(session: Session = Depends(get_session)):
     taobao_jpy = _sum(session, TaobaoOrder, True)
-    junfeng_jpy = _sum(session, JunfengOrder, True)
+    shipment_jpy = _sum(session, ShipmentOrder, True)
     misc_jpy = _sum(session, MiscExpense, False)
 
     bucket: dict[str, int] = defaultdict(int)
     _by_month(session, TaobaoOrder, True, bucket)
-    _by_month(session, JunfengOrder, True, bucket)
+    _by_month(session, ShipmentOrder, True, bucket)
     _by_month(session, MiscExpense, False, bucket)
     by_month = [MonthTotal(month=m, jpy=bucket[m]) for m in sorted(bucket)]
 
     return DashboardRead(
-        total_jpy=taobao_jpy + junfeng_jpy + misc_jpy,
+        total_jpy=taobao_jpy + shipment_jpy + misc_jpy,
         taobao_jpy=taobao_jpy,
-        junfeng_jpy=junfeng_jpy,
+        shipment_jpy=shipment_jpy,
         misc_jpy=misc_jpy,
         taobao_count=_count(session, TaobaoOrder, True),
-        junfeng_count=_count(session, JunfengOrder, True),
+        shipment_count=_count(session, ShipmentOrder, True),
         misc_count=_count(session, MiscExpense, False),
         by_month=by_month,
         fx_rate=current_rate(session),

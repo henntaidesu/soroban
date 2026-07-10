@@ -16,12 +16,12 @@
           <el-input v-model="filters.q" placeholder="搜订单号" clearable style="width: 140px" @change="reload" />
         </template>
 
-        <template #cell-junfeng_order_id="{ row }">
-          <el-select :model-value="row.junfeng_order_id" clearable filterable placeholder="未集运"
-                     size="small" class="jf-pick" @change="(v) => saveCell(row, 'junfeng_order_id', v ?? null)">
-            <el-option v-for="j in junfengOptions" :key="j.id" :label="j.junfeng_no || ('#' + j.id)" :value="j.id">
+        <template #cell-shipment_order_id="{ row }">
+          <el-select :model-value="row.shipment_order_id" clearable filterable placeholder="未集运"
+                     size="small" class="jf-pick" @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
+            <el-option v-for="j in shipmentOptions" :key="j.id" :label="j.shipment_no || ('#' + j.id)" :value="j.id">
               <div class="jf-opt">
-                <b>{{ j.junfeng_no || ('#' + j.id) }}</b>
+                <b>{{ j.shipment_no || ('#' + j.id) }}</b>
                 <span class="jf-meta">{{ j.date }} · {{ j.status }} · 运费{{ fmtJPY(j.jpy_settled) }}</span>
               </div>
             </el-option>
@@ -43,7 +43,7 @@
               <el-button size="small" :icon="Plus" @click="ensureItems(row).push({ name: '', quantity: 1 })">加物品</el-button>
               <el-button size="small" type="primary" @click="saveItems(row)">保存物品</el-button>
             </div>
-            <div class="ex-hint">君丰归属在上面「君丰(点选)」列里改。</div>
+            <div class="ex-hint">集运归属在上面「集运(点选)」列里改。</div>
           </div>
         </template>
 
@@ -59,7 +59,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
-import { junfengApi, taobaoApi } from '@/api'
+import { shipmentApi, taobaoApi } from '@/api'
 import { TAOBAO_STATUS } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
@@ -77,7 +77,7 @@ const columns = [
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 75 },
   { key: 'jpy_override', label: '覆盖¥', type: 'int', format: 'jpy', width: 95, placeholder: '实付日元' },
   { key: 'jpy_settled', label: '结算¥', format: 'jpy', readonly: true, width: 100 },
-  { key: 'junfeng_order_id', label: '君丰(点选)', readonly: true, width: 176 },
+  { key: 'shipment_order_id', label: '集运(点选)', readonly: true, width: 176 },
   { key: 'items', label: '物品', readonly: true, minWidth: 110, expand: true },
 ]
 
@@ -87,7 +87,7 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
 const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
-const junfengOptions = ref([])
+const shipmentOptions = ref([])
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
@@ -117,9 +117,9 @@ async function load() {
 function reload() { page.value = 1; load() }
 function onPage(p) { page.value = p; load() }
 
-async function loadJunfeng() {
-  const res = await junfengApi.list({ limit: 200 })
-  junfengOptions.value = res.items
+async function loadShipment() {
+  const res = await shipmentApi.list({ limit: 200 })
+  shipmentOptions.value = res.items
 }
 
 async function saveCell(row, key, value) {
@@ -165,7 +165,7 @@ async function delRow(row) {
   } catch (_) { /* 拦截器已提示 */ }
 }
 
-onMounted(() => { loadJunfeng(); load() })
+onMounted(() => { loadShipment(); load() })
 </script>
 
 <style scoped>
@@ -175,7 +175,7 @@ onMounted(() => { loadJunfeng(); load() })
 .ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }
 .ex-hint { color: #7d8aa3; font-size: 12px; margin-top: 8px; }
 .item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-/* 君丰点选：内嵌无边框，像格子里的选择 */
+/* 集运点选：内嵌无边框，像格子里的选择 */
 .jf-pick { width: 100%; }
 .jf-pick :deep(.el-select__wrapper),
 .jf-pick :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }

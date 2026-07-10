@@ -31,14 +31,14 @@ import { fmtJPY } from '@/utils/money'
 
 const loading = ref(false)
 const data = reactive({
-  total_jpy: 0, taobao_jpy: 0, junfeng_jpy: 0, misc_jpy: 0,
-  taobao_count: 0, junfeng_count: 0, misc_count: 0, by_month: [], fx_rate: null,
+  total_jpy: 0, taobao_jpy: 0, shipment_jpy: 0, misc_jpy: 0,
+  taobao_count: 0, shipment_count: 0, misc_count: 0, by_month: [], fx_rate: null,
 })
 
 const cards = computed(() => [
   { label: '总支出', value: data.total_jpy, color: '#1890ff', sub: `汇率 1元≈${data.fx_rate ?? '—'}円` },
   { label: '淘宝（含快递）', value: data.taobao_jpy, color: '#67C23A', sub: `${data.taobao_count} 单` },
-  { label: '君丰运费', value: data.junfeng_jpy, color: '#E6A23C', sub: `${data.junfeng_count} 单` },
+  { label: '集运运费', value: data.shipment_jpy, color: '#E6A23C', sub: `${data.shipment_count} 单` },
   { label: '杂项', value: data.misc_jpy, color: '#F56C6C', sub: `${data.misc_count} 项` },
 ])
 

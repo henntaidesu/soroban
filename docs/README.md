@@ -227,3 +227,43 @@
 - **「操作」列瘦身**：淘宝/君丰/杂项的操作列原本只有「删除」，删除既已并入 ID 格，这三页整列移除（无 `#actions` slot → `hasActions=false`）；全部订单的操作列保留「导入/忽略」，宽度 176→128。
 - 自测：headless 16/16（四页最左即 ID 列无行号残留、数据行首格 gtn-td-id、淘宝首行 ID==后端 id、幽灵「＋」在 ID 首格、ID 格垃圾桶删除真生效 行数-1、无报错）。
 - 修复两处（headless 8/8）：① 幽灵新建行里空的展开/操作格无边框 class → 网格竖/横线断，给 `.gtn-new td` 补 `border-right/bottom`（有展开列的三页可见）；② 「全部订单」菜单图标名 `Inbox` 在 @element-plus/icons-vue **不存在**（故不渲染）→ 改 `Tickets`（Layout nav + router meta 同步）。
+
+### 第十一版：君丰页「点选式」关联淘宝订单（双向编辑，同一外键）
+- **需求**：淘宝先买、集运后建，故「JF 里挑淘宝单」比「每个淘宝单去点选 JF」更贴流程。JF 页展开面板从只读改成**可编辑**：已关联淘宝单每行显示 **订单号 · 物品×数量 · 结算金额** + 「移除」；下方一个 el-select 点选下拉「＋添加淘宝订单（未挂靠）」，选项同样显示订单号·物品×数量·结算金额。淘宝页「君丰(点选)」列**保留**（两页都能改）。
+- **为何双向安全**：JF↔淘宝是**同一个外键** `TaobaoOrder.junfeng_order_id`，两页改的是同一字段，不存在暂存↔账本那种「两份拷贝分叉」。
+- **后端**：`POST/DELETE /api/junfeng/{jf}/taobao/{tb}` 逐单增删；`GET /api/taobao?unassigned=true` 只列未挂靠；`TaobaoBrief` 加 `items`；`_read` 用 `selectinload` 载入子物品。attach 只接未挂靠的单，已挂别的 JF → 422（防误抢，先移除再加）。
+- **多智能体对抗审查（3 维度 reviewer→逐条 skeptic 复核）发现并修复**：
+  - 🔴 attach/detach 原为「读-判断-写」+ 裸 `tb.version += 1`，**并发下会静默双挂/误抢**、且丢失并发的 version 自增（削弱乐观锁）。→ 改成**原子守卫 UPDATE**：`UPDATE ... WHERE junfeng_order_id IS NULL AND deleted_at IS NULL` 靠 rowcount 判定（0→422），`version = version + 1` 在 DB 层自增，与 `guarded_bump` 同风格。
+  - 🟡 `TaobaoBrief` 加 items 引入子物品 N+1 → `selectinload` 批量载入。
+  - （对抗复核否掉 1 条误报：淘宝页 `.tag` 死 CSS 属改动前既有，不算本次缺陷。）
+- 自测：后端 TestClient **20/20**（增删/幂等/422/404/version→409/unassigned/面板带物品金额）；**并发压测 20/20**（同单同时挂 A/B，恒为「一个 200 + 一个 422」，静默双挂 0、无 500）；无头 E2E **8/8**（点选加入→面板+后端外键、移除→清空、下拉显示物品金额、无报错）。
+- **君丰表加「淘宝订单」列**（可拖动列，显示 `N 单：订单号…` 摘要，空时「点击添加」）：点该格即展开上面的关联编辑面板（复用 `expand:true` 机制，与淘宝/暂存页点「物品」展开同源）。headless 8/8。
+
+### 第十二版：退款/取消不计入合计（弃用负数冲抵）+ 全面禁负数
+- **记账模型调整**（用户定）：不再「额外开一行、用负数冲抵退款」。订单打上 **退款 / 已取消** 标记即**自动不计入看板合计**——金额与物品仍照常显示，只是不加总。
+- 后端：`models.CANCELLED_STATUSES` → `EXCLUDED_STATUSES`（并入淘宝 `退款`）；`dashboard._valid_conds` 用它 `status.notin_(...)` 排除求和/计数/按月。君丰仅 `已取消`（无退款态），杂项无 status 列不受影响；暂存本就不进看板。
+- **全面禁负数**（「系统不需要负数」）：`MoneyIn.price_cny / jpy_override` 与 `StagingBase.price_cny` 加非负校验（<0 → 422，提示「退款/取消请用状态标记」）；0 与正数照常。覆盖淘宝/君丰/杂项/暂存四处。
+- demo 去掉两条负数示例：淘宝 `TB250704050` 退款 `-25→+25`（演示「退款照显但不计入」）；杂项「超卖退款到账 `-500`」→「关税补缴 `+650`」。
+- 自测：后端 TestClient **14/14**（退款/取消不计入合计与计数、金额仍算出、列表仍显示、四处禁负数 422、0/正数放行）；headless **7/7**（看板渲染、退款单正金额+标签仍显示、负数输入弹错且不落库、无报错）。
+
+### 第十三版：「君丰订单」全量重命名为「集运订单」（Shipment）
+- 去掉供应商专属词，统一为通用的「集运订单」。**代码/表/接口/变量全部重命名**，一次性大改（用户明确要求）。
+- 命名对照（本文档以上所有 `君丰/Junfeng/junfeng_*` 均为当时命名，现行代码一律用右侧）：
+
+  | 旧 | 新 |
+  |---|---|
+  | 君丰订单（显示） | 集运订单 |
+  | `JunfengOrder` / 表 `junfengorder` | `ShipmentOrder` / 表 `shipmentorder` |
+  | `JunfengStatus` / `JUNFENG_STATUS` | `ShipmentStatus` / `SHIPMENT_STATUS` |
+  | `JunfengCreate/Update/Read/Base` | `ShipmentCreate/Update/Read/Base` |
+  | `shipment_no`←`junfeng_no` | `shipment_no` |
+  | `junfeng_order_id`（淘宝外键） | `shipment_order_id` |
+  | `junfeng_order`（关系） | `shipment_order` |
+  | `/api/junfeng`（+ `/{id}/taobao/{tb}`） | `/api/shipment` |
+  | `Source.junfeng_bot` | `Source.shipment_bot` |
+  | 看板 `junfeng_jpy/junfeng_count` | `shipment_jpy/shipment_count` |
+  | `routers/junfeng.py` | `routers/shipment.py` |
+  | 前端 `views/Junfeng`、`junfengApi`、`shipmentOptions`、`table-name/布局键 junfeng` | `views/Shipment`、`shipmentApi`、`shipmentOptions`、`shipment` |
+
+- 方式：对 `backend/app`+`frontend/src` 全部 `.py/.vue/.js` 做大小写一致的整词替换（`junfeng→shipment`、`Junfeng→Shipment`、`JUNFENG→SHIPMENT`、`君丰→集运`），共 15 文件；两文件改名；无真实数据故 `create_all` 直接重灌演示库。docs 历史日志保留旧名作当时记录。
+- 自测：后端启动+重灌 OK，`/api/shipment` 200 / 旧 `/api/junfeng` 404，看板出 `shipment_jpy`；代码残留 junfeng/君丰 = **0**；后端 TestClient **20/20（attach/detach 边界）+ 14/14（退款/禁负）**、并发 **20/20**、无头 E2E **11/11**（菜单=集运订单无君丰、页面/URL、点选关联打 `/api/shipment/{id}/taobao/{tb}` 写 `shipment_order_id`、淘宝页「集运(点选)」列、看板、0 报错）全部对新接口重跑通过。

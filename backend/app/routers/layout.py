@@ -15,7 +15,7 @@ router = APIRouter(
     prefix="/api/layout", tags=["layout"], dependencies=[Depends(get_current_user)]
 )
 
-_TABLES = {"taobao", "junfeng", "misc", "staging"}
+_TABLES = {"taobao", "shipment", "misc", "staging"}
 
 
 def _check_table(name: str):

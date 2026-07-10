@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import JunfengOrder, OrderItem, TaobaoOrder, User
+from ..models import ShipmentOrder, OrderItem, TaobaoOrder, User
 from ..schemas import TaobaoCreate, TaobaoRead, TaobaoUpdate
 from .common import conflict, guarded_bump, not_found, soft_delete
 
@@ -18,12 +18,12 @@ router = APIRouter(
 )
 
 
-def _check_junfeng(session: Session, jf_id):
-    """挂靠的君丰订单必须存在且未软删（防悬空/无效外链）。"""
+def _check_shipment(session: Session, jf_id):
+    """挂靠的集运订单必须存在且未软删（防悬空/无效外链）。"""
     if jf_id is not None:
-        jf = session.get(JunfengOrder, jf_id)
+        jf = session.get(ShipmentOrder, jf_id)
         if not jf or jf.deleted_at is not None:
-            raise HTTPException(status_code=422, detail="所属君丰订单不存在或已删除")
+            raise HTTPException(status_code=422, detail="所属集运订单不存在或已删除")
 
 
 @router.get("")
@@ -34,12 +34,15 @@ def list_orders(
     status: Optional[str] = None,
     taobao_account: Optional[str] = None,
     express_no: Optional[str] = None,
-    junfeng_order_id: Optional[int] = None,
+    shipment_order_id: Optional[int] = None,
+    unassigned: Optional[bool] = Query(None, description="仅未挂靠集运的订单（供 JF 页点选添加）"),
     q: Optional[str] = Query(None, description="按订单号搜索"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     conds = [TaobaoOrder.deleted_at.is_(None)]
+    if unassigned:
+        conds.append(TaobaoOrder.shipment_order_id.is_(None))
     if date_from:
         conds.append(TaobaoOrder.date >= date_from)
     if date_to:
@@ -50,8 +53,8 @@ def list_orders(
         conds.append(TaobaoOrder.taobao_account == taobao_account)
     if express_no:
         conds.append(TaobaoOrder.express_no == express_no)
-    if junfeng_order_id is not None:
-        conds.append(TaobaoOrder.junfeng_order_id == junfeng_order_id)
+    if shipment_order_id is not None:
+        conds.append(TaobaoOrder.shipment_order_id == shipment_order_id)
     if q:
         conds.append(TaobaoOrder.order_no.contains(q, autoescape=True))
 
@@ -70,7 +73,7 @@ def list_orders(
 def create_order(payload: TaobaoCreate, session: Session = Depends(get_session)):
     from ..services.fx import current_rate  # 局部导入避免循环
 
-    _check_junfeng(session, payload.junfeng_order_id)
+    _check_shipment(session, payload.shipment_order_id)
     data = payload.model_dump(exclude={"items"})
     order = TaobaoOrder(**data)
     if order.fx_rate is None:                 # 新建时写入当天汇率
@@ -96,8 +99,8 @@ def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depend
     order = session.get(TaobaoOrder, order_id)
     if not order or order.deleted_at is not None:
         not_found("淘宝订单")
-    if "junfeng_order_id" in payload.model_fields_set:
-        _check_junfeng(session, payload.junfeng_order_id)
+    if "shipment_order_id" in payload.model_fields_set:
+        _check_shipment(session, payload.shipment_order_id)
     if not guarded_bump(session, TaobaoOrder, order_id, payload.version):
         conflict()
 

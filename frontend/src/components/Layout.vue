@@ -45,7 +45,7 @@ const nav = [
   { path: '/dashboard', title: '看板', icon: 'Odometer' },
   { path: '/staging', title: '全部订单', icon: 'Tickets' },
   { path: '/taobao', title: '淘宝订单', icon: 'ShoppingCart' },
-  { path: '/junfeng', title: '君丰订单', icon: 'Ship' },
+  { path: '/shipment', title: '集运订单', icon: 'Ship' },
   { path: '/misc', title: '杂项支出', icon: 'Money' },
 ]
 

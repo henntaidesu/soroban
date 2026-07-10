@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- soroban ---
+# SQLite database + WAL sidecar files (含数据与密码哈希，切勿提交)
+*.db
+*.db-wal
+*.db-shm
+# Frontend (纯 Python 模板没覆盖)
+node_modules/
+frontend/dist/
+
+# soroban backups
+backups/

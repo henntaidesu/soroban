@@ -4,7 +4,7 @@
 
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
-                   table-name="junfeng" @save="saveCell" @add="addRow">
+                   table-name="junfeng" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
@@ -32,9 +32,6 @@
           </div>
         </template>
 
-        <template #actions="{ row }">
-          <el-button size="small" link type="danger" @click="delRow(row)">删除</el-button>
-        </template>
       </NotionTable>
 
       <el-pagination class="pager" layout="prev, pager, next, total" :total="total"

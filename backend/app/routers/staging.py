@@ -23,12 +23,49 @@ from ..models import (
     TaobaoStatus,
     utcnow,
 )
-from ..schemas import StagingCreate, StagingRead, StagingUpdate, TaobaoRead
+from ..schemas import StagingCreate, StagingItemRead, StagingRead, StagingUpdate, TaobaoRead
 from .common import not_found
 
 router = APIRouter(
     prefix="/api/staging", tags=["staging"], dependencies=[Depends(get_current_user)]
 )
+
+# 已导入行：暂存字段 → 账本字段的映射（单一真源写穿账本；status=导入工作流状态留暂存自身）
+_SHARED_TO_ORDER = {
+    "order_date": "date",
+    "order_no": "order_no",
+    "shop": "shop",
+    "taobao_account": "taobao_account",
+    "express_no": "express_no",
+    "price_cny": "price_cny",
+    "fx_rate": "fx_rate",
+    "order_status": "status",
+}
+
+
+def _linked_order(session: Session, row: TaobaoStaging) -> Optional[TaobaoOrder]:
+    """已导入且账本订单仍在（未软删）→ 返回该订单，否则 None。"""
+    if row.imported_taobao_order_id is None:
+        return None
+    order = session.get(TaobaoOrder, row.imported_taobao_order_id)
+    return order if order and order.deleted_at is None else None
+
+
+def _read(session: Session, row: TaobaoStaging) -> StagingRead:
+    """已导入行的共享字段用账本的实时值覆盖显示（单一真源，两页永远一致）。"""
+    data = StagingRead.model_validate(row)
+    order = _linked_order(session, row)
+    if order is not None:
+        data.order_date = order.date
+        data.order_no = order.order_no
+        data.shop = order.shop
+        data.taobao_account = order.taobao_account
+        data.express_no = order.express_no
+        data.price_cny = order.price_cny
+        data.fx_rate = order.fx_rate
+        data.order_status = order.status
+        data.items = [StagingItemRead(id=it.id, name=it.name, quantity=it.quantity) for it in order.items]
+    return data
 
 
 @router.get("")
@@ -58,17 +95,21 @@ def list_staging(
         .offset(offset)
         .limit(limit)
     ).all()
-    return {"items": [StagingRead.model_validate(r) for r in rows], "total": total}
+    return {"items": [_read(session, r) for r in rows], "total": total}
 
 
 @router.post("", response_model=StagingRead)
 def create_staging(payload: StagingCreate, session: Session = Depends(get_session)):
+    from ..services.fx import current_rate  # 局部导入避免循环
+
     row = TaobaoStaging(**payload.model_dump(exclude={"items"}))
+    if row.fx_rate is None:                  # 新建/抓取时记当天汇率
+        row.fx_rate = current_rate(session)
     row.items = [StagingItem(name=it.name, quantity=it.quantity) for it in payload.items]
     session.add(row)
     session.commit()
     session.refresh(row)
-    return row
+    return _read(session, row)
 
 
 @router.patch("/{row_id}", response_model=StagingRead)
@@ -76,7 +117,31 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     row = session.get(TaobaoStaging, row_id)
     if not row:
         not_found("暂存记录")
-    for key, value in payload.model_dump(exclude_unset=True, exclude={"items"}).items():
+    data = payload.model_dump(exclude_unset=True, exclude={"items"})
+    order = _linked_order(session, row)
+
+    if order is not None:
+        # 已导入：共享字段写穿到账本（唯一真源），仅「导入状态」留在暂存自身
+        for key, value in data.items():
+            if key in _SHARED_TO_ORDER:
+                setattr(order, _SHARED_TO_ORDER[key], value)
+            elif key == "status":
+                row.status = value
+        order.compute_money()
+        order.version += 1                              # 让账本页的乐观锁能察觉此次改动
+        if payload.items is not None:                   # 物品也写穿账本（[] = 清空）
+            order.items.clear()
+            for it in payload.items:
+                order.items.append(OrderItem(name=it.name, quantity=it.quantity))
+        row.updated_at = utcnow()
+        session.add(order)
+        session.add(row)
+        session.commit()                                # order_no 撞账本唯一索引 → IntegrityError → 409
+        session.refresh(row)
+        return _read(session, row)
+
+    # 未导入：编辑暂存自身副本
+    for key, value in data.items():
         setattr(row, key, value)
     if payload.items is not None:                       # 给了 items 就整体替换（[] = 清空）
         row.items.clear()
@@ -86,7 +151,7 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     session.add(row)
     session.commit()
     session.refresh(row)
-    return row
+    return _read(session, row)
 
 
 @router.delete("/{row_id}")
@@ -109,7 +174,7 @@ def ignore_staging(row_id: int, session: Session = Depends(get_session)):
     session.add(row)
     session.commit()
     session.refresh(row)
-    return row
+    return _read(session, row)
 
 
 @router.post("/{row_id}/import", response_model=TaobaoRead)
@@ -130,8 +195,8 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         taobao_account=row.taobao_account,
         express_no=row.express_no,
         price_cny=row.price_cny,
-        fx_rate=current_rate(session),          # 用当前汇率预填，可到账本再改
-        status=TaobaoStatus.paid.value,
+        fx_rate=row.fx_rate or current_rate(session),   # 优先用暂存记录的当天汇率，一同迁移
+        status=row.order_status or TaobaoStatus.paid.value,   # 订单状态一同迁移
         source=Source.imported.value,
     )
     order.compute_money()
@@ -145,6 +210,7 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         .where(TaobaoStaging.id == row_id, TaobaoStaging.imported_taobao_order_id.is_(None))
         .values(
             status=StagingStatus.imported.value,
+            order_status=order.status,          # 快照对齐账本（此后以账本为准，读时覆盖）
             imported_taobao_order_id=order.id,
             updated_at=utcnow(),
         )

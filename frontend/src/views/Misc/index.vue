@@ -3,14 +3,12 @@
     <h2 class="page-title">杂项支出</h2>
 
     <el-card>
-      <NotionTable :columns="columns" :rows="rows" :loading="loading" table-name="misc" @save="saveCell" @add="addRow">
+      <NotionTable :columns="columns" :rows="rows" :loading="loading" table-name="misc"
+                   @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜名称" clearable style="width: 150px" @change="reload" />
-        </template>
-        <template #actions="{ row }">
-          <el-button size="small" link type="danger" @click="delRow(row)">删除</el-button>
         </template>
       </NotionTable>
 

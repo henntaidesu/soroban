@@ -221,10 +221,12 @@ class TaobaoStaging(SQLModel, table=True):
     taobao_account: Optional[str] = None
     shop: Optional[str] = None
     price_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)
+    fx_rate: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)  # 新建/抓取时记当天汇率，导入一同迁移
     order_date: Optional[dt.date] = None
     express_no: Optional[str] = None
     raw_json: Optional[str] = None                          # 原始留底
-    status: str = Field(default=StagingStatus.pending.value, index=True)
+    status: str = Field(default=StagingStatus.pending.value, index=True)  # 导入工作流状态：待处理/已导入/已忽略
+    order_status: Optional[str] = Field(default=None)       # 淘宝订单真实状态(已付/已发/…)；导入后与账本 status 联动
     imported_taobao_order_id: Optional[int] = Field(
         default=None, foreign_key="taobaoorder.id"
     )

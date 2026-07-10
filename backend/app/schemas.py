@@ -305,8 +305,30 @@ class StagingBase(SQLModel):
     taobao_account: Optional[str] = None
     shop: Optional[str] = None
     price_cny: Optional[Decimal] = None
+    fx_rate: Optional[Decimal] = None
     order_date: Optional[dt.date] = None
     express_no: Optional[str] = None
+    order_status: Optional[str] = None       # 淘宝订单真实状态（已付/已发/…），导入后与账本联动
+
+    @field_validator("price_cny")
+    @classmethod
+    def _q_cny(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        return None if v is None else Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
+
+    @field_validator("fx_rate")
+    @classmethod
+    def _fx_range(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is None:
+            return None
+        v = Decimal(v).quantize(_FX_Q, rounding=ROUND_HALF_UP)
+        if not (FX_MIN <= v <= FX_MAX):
+            raise ValueError(f"汇率 {v} 不在合理区间 [{FX_MIN}, {FX_MAX}]")
+        return v
+
+    @field_validator("order_status")
+    @classmethod
+    def _order_status(cls, v: Optional[str]) -> Optional[str]:
+        return v if v is None else _check(v, _TAOBAO_STATUS, "订单状态")
 
 
 class StagingCreate(StagingBase):

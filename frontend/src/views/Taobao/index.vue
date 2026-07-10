@@ -4,7 +4,7 @@
 
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
-                   table-name="taobao" @save="saveCell" @add="addRow">
+                   table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
@@ -47,9 +47,6 @@
           </div>
         </template>
 
-        <template #actions="{ row }">
-          <el-button size="small" link type="danger" @click="delRow(row)">删除</el-button>
-        </template>
       </NotionTable>
 
       <el-pagination class="pager" layout="prev, pager, next, total" :total="total"
@@ -81,7 +78,7 @@ const columns = [
   { key: 'jpy_override', label: '覆盖¥', type: 'int', format: 'jpy', width: 95, placeholder: '实付日元' },
   { key: 'jpy_settled', label: '结算¥', format: 'jpy', readonly: true, width: 100 },
   { key: 'junfeng_order_id', label: '君丰(点选)', readonly: true, width: 176 },
-  { key: 'items', label: '物品', readonly: true, minWidth: 110 },
+  { key: 'items', label: '物品', readonly: true, minWidth: 110, expand: true },
 ]
 
 const rows = ref([])

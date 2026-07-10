@@ -68,9 +68,13 @@ def list_orders(
 
 @router.post("", response_model=TaobaoRead)
 def create_order(payload: TaobaoCreate, session: Session = Depends(get_session)):
+    from ..services.fx import current_rate  # 局部导入避免循环
+
     _check_junfeng(session, payload.junfeng_order_id)
     data = payload.model_dump(exclude={"items"})
     order = TaobaoOrder(**data)
+    if order.fx_rate is None:                 # 新建时写入当天汇率
+        order.fx_rate = current_rate(session)
     order.compute_money()
     order.items = [OrderItem(name=it.name, quantity=it.quantity) for it in payload.items]
     session.add(order)

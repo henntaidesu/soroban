@@ -69,7 +69,11 @@ def list_orders(
 
 @router.post("", response_model=JunfengRead)
 def create_order(payload: JunfengCreate, session: Session = Depends(get_session)):
+    from ..services.fx import current_rate  # 局部导入避免循环
+
     order = JunfengOrder(**payload.model_dump())
+    if order.fx_rate is None:                 # 新建时写入当天汇率
+        order.fx_rate = current_rate(session)
     order.compute_money()
     session.add(order)
     session.commit()

@@ -1,13 +1,13 @@
 <template>
   <div>
     <div class="bar">
-      <h2 class="page-title">全部淘宝订单</h2>
+      <h2 class="page-title">全部订单</h2>
       <span class="hint">一个淘宝号下的所有订单都放这里（一单可多物），逐单点「导入」才进入账本。（将来爬虫自动灌入）</span>
     </div>
 
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
-                   table-name="staging" :actions-width="176" @save="saveCell" @add="addRow">
+                   table-name="staging" :actions-width="128" @save="saveCell" @add="addRow" @delete="doDelete">
         <template #toolbar>
           <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 130px" @change="reload">
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
@@ -46,7 +46,6 @@
             <el-button size="small" type="primary" @click="doImport(row)">导入</el-button>
             <el-button v-if="row.status !== '已忽略'" size="small" link @click="doIgnore(row)">忽略</el-button>
           </template>
-          <el-button size="small" link type="danger" @click="doDelete(row)">删除</el-button>
         </template>
       </NotionTable>
 
@@ -61,6 +60,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { stagingApi } from '@/api'
+import { TAOBAO_STATUS } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 const STAGING_STATUS = ['待处理', '已导入', '已忽略']
@@ -71,10 +71,12 @@ const columns = [
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 130, placeholder: '订单号' },
   { key: 'shop', label: '店铺', type: 'text', minWidth: 110 },
   { key: 'price_cny', label: '人民币', type: 'decimal', format: 'cny', width: 100 },
+  { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天' },
   { key: 'taobao_account', label: '淘宝号', type: 'text', width: 100 },
   { key: 'express_no', label: '快递号', type: 'text', width: 110 },
-  { key: 'items', label: '物品', readonly: true, minWidth: 140 },
-  { key: 'status', label: '状态', readonly: true, width: 90 },
+  { key: 'items', label: '物品', readonly: true, minWidth: 140, expand: true },
+  { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: 100 },
+  { key: 'status', label: '导入状态', readonly: true, width: 90 },
 ]
 
 const rows = ref([])

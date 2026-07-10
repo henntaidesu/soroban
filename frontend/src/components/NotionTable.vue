@@ -5,7 +5,7 @@
     <div class="gtn-scroll" v-loading="loading">
       <table class="gtn-table" :style="{ width: totalWidth + 'px' }">
         <colgroup>
-          <col style="width: 42px" />
+          <col style="width: 56px" />
           <col v-if="hasActions" :style="{ width: actionsWidth + 'px' }" />
           <col v-if="expandable" style="width: 30px" />
           <col v-for="col in cols" :key="col.key" :style="{ width: (col.width || 160) + 'px' }" />
@@ -13,7 +13,7 @@
 
         <thead>
           <tr>
-            <th class="gtn-th gtn-th-num"></th>
+            <th class="gtn-th gtn-th-id">ID</th>
             <th v-if="hasActions" class="gtn-th gtn-th-act">操作</th>
             <th v-if="expandable" class="gtn-th"></th>
             <th v-for="col in cols" :key="col.key" class="gtn-th"
@@ -33,7 +33,7 @@
         <tbody>
           <!-- 幽灵新建行：放最上，与「最新在上」一致；任意格输入即建行 -->
           <tr v-if="addable" class="gtn-new">
-            <td class="gtn-td-num gtn-new-num" title="新建一行" @click="commitNew">
+            <td class="gtn-td-id gtn-new-num" title="新建一行" @click="commitNew">
               <el-icon><component :is="hasNew ? Check : Plus" /></el-icon>
             </td>
             <td v-if="hasActions"></td>
@@ -44,17 +44,19 @@
             </td>
           </tr>
 
-          <template v-for="(row, ri) in rows" :key="row.id">
+          <template v-for="row in rows" :key="row.id">
             <tr class="gtn-row">
-              <td class="gtn-td-num">
-                <span class="num">{{ ri + 1 }}</span>
+              <td class="gtn-td-id">
+                <span class="num">{{ row.id }}</span>
                 <el-icon class="del" title="删除此行" @click="$emit('delete', row)"><Delete /></el-icon>
               </td>
               <td v-if="hasActions" class="gtn-td gtn-td-act"><slot name="actions" :row="row" /></td>
               <td v-if="expandable" class="gtn-td-exp" @click="toggle(row.id)">
                 <el-icon class="chev" :class="{ open: open.has(row.id) }"><ArrowRight /></el-icon>
               </td>
-              <td v-for="col in cols" :key="col.key" class="gtn-td">
+              <td v-for="col in cols" :key="col.key" class="gtn-td"
+                  :class="{ 'gtn-td-clickexp': col.expand && expandable }"
+                  @click="col.expand && expandable ? toggle(row.id) : null">
                 <div v-if="$slots['cell-' + col.key]" class="gtn-slot"><slot :name="'cell-' + col.key" :row="row" /></div>
                 <GotionCell v-else :model-value="row[col.key]" :col="col" @change="(v) => $emit('save', row, col.key, v)" />
               </td>
@@ -96,7 +98,7 @@ let dirtyDuringLoad = false   // 用户在初始拉取期间改过布局？改�
 const hasActions = computed(() => !!slots.actions)
 const colspan = computed(() => 1 + (props.expandable ? 1 : 0) + cols.value.length + (hasActions.value ? 1 : 0))
 const totalWidth = computed(() =>
-  42 + (props.expandable ? 30 : 0)
+  56 + (props.expandable ? 30 : 0)
   + cols.value.reduce((s, c) => s + (c.width || 160), 0)
   + (hasActions.value ? Number(props.actionsWidth) : 0),
 )
@@ -211,7 +213,6 @@ function stopResize() {
   padding: 0; text-align: left; font-weight: 500; font-size: 12px; color: #c7d2e6;
   position: sticky; top: 0; z-index: 2; white-space: nowrap;
 }
-.gtn-th-num { width: 42px; }
 .gtn-th-act { text-align: center; padding: 8px 10px; }
 .gtn-th-inner { display: flex; align-items: center; padding: 8px 10px; position: relative; }
 .gtn-col-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -223,22 +224,24 @@ function stopResize() {
 .gtn-resize:hover { background: #3a4a6b; }
 
 .gtn-row:hover td { background: #1b2942; }
-.gtn-td-num {
-  text-align: center; color: #6b7a93; font-size: 11px;
+.gtn-th-id { text-align: center; padding: 8px 6px; }
+.gtn-td-id {
+  text-align: center; color: #7a8aa3; font-size: 11px;
   border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; position: relative;
 }
-.gtn-td-num .del { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; color: #f56c6c; cursor: pointer; }
-.gtn-td-num:hover .num { opacity: 0; }
-.gtn-td-num:hover .del { display: inline-flex; }
+.gtn-td-id .del { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; color: #f56c6c; cursor: pointer; }
+.gtn-td-id:hover .num { opacity: 0; }
+.gtn-td-id:hover .del { display: inline-flex; }
 .gtn-td-exp { text-align: center; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; cursor: pointer; color: #7d8aa3; }
 .gtn-td-exp .chev { transition: transform 0.15s; }
 .gtn-td-exp .chev.open { transform: rotate(90deg); }
 .gtn-td { height: 36px; padding: 0; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; max-width: 0; overflow: hidden; }
 .gtn-td-act { overflow: visible; text-align: center; }
+.gtn-td-clickexp { cursor: pointer; }
 .gtn-slot { height: 36px; padding: 0 8px; display: flex; align-items: center; overflow: hidden; white-space: nowrap; }
 
 .gtn-exp-row > td { background: #10192c; border-bottom: 1px solid #28354a; }
-.gtn-new td { background: #10192c; }
+.gtn-new td { background: #10192c; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
 .gtn-new-num { color: #5c6b85; cursor: pointer; }
 .gtn-new-num:hover { color: #67c23a; background: rgba(103, 194, 58, 0.1); }
 </style>

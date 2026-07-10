@@ -110,18 +110,20 @@ def main() -> None:
 
         # —— 暂存（待处理，演示「导入 / 忽略」；含一单多物）——
         staging = [
-            dict(order_no="TB250708081", taobao_account="acctA", shop="谷子屋",
+            dict(order_no="TB250708081", taobao_account="acctA", shop="谷子屋", order_status="已付",
                  price_cny="45", order_date=D(2026, 7, 8), items=[("色纸", 2), ("明信片套装", 1)]),
-            dict(order_no="TB250708090", taobao_account="acctA", shop="手办工房",
+            dict(order_no="TB250708090", taobao_account="acctA", shop="手办工房", order_status="已发",
                  price_cny="150", order_date=D(2026, 7, 8), items=[("景品公仔", 1)]),
-            dict(order_no="TB250707100", taobao_account="acctB", shop="日用百货",
+            dict(order_no="TB250707100", taobao_account="acctB", shop="日用百货", order_status="已收",
                  price_cny="39", order_date=D(2026, 7, 7), items=[("洗发水(非集运)", 1)]),
-            dict(order_no="TB250709110", taobao_account="acctA", shop="画集屋",
+            dict(order_no="TB250709110", taobao_account="acctA", shop="画集屋", order_status="已付",
                  price_cny="78", order_date=D(2026, 7, 9), items=[("设定集", 1), ("A3 海报", 2)]),
         ]
         for st in staging:
             items = st.pop("items")
-            row = TaobaoStaging(price_cny=Decimal(st.pop("price_cny")), **st)
+            row = TaobaoStaging(
+                price_cny=Decimal(st.pop("price_cny")), fx_rate=Decimal("23.86"), **st
+            )
             row.items = [StagingItem(name=n, quantity=q) for n, q in items]
             s.add(row)
 

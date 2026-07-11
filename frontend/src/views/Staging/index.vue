@@ -1,7 +1,6 @@
 <template>
   <div>
     <div class="bar">
-      <h2 class="page-title">全部订单</h2>
       <span class="hint">一个淘宝号下的所有订单都放这里（一单可多物），逐单点「导入」才进入账本。（将来爬虫自动灌入）</span>
     </div>
 
@@ -173,8 +172,8 @@ onMounted(load)
 </script>
 
 <style scoped>
-.bar { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.hint { color: #7d8aa3; font-size: 13px; }
+.bar { margin-bottom: 10px; }
+.hint { color: #7d8aa3; font-size: 12px; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .ph { color: #5b6880; }
 .expand { padding: 12px 20px; }

@@ -1,7 +1,5 @@
 <template>
   <div>
-    <h2 class="page-title">看板</h2>
-
     <el-row :gutter="16" v-loading="loading">
       <el-col :xs="12" :sm="12" :md="6" v-for="c in cards" :key="c.label">
         <div class="stat" :style="{ borderTopColor: c.color }">

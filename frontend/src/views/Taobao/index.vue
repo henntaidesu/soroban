@@ -1,12 +1,10 @@
 <template>
   <div>
-    <h2 class="page-title">淘宝订单</h2>
-
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
                    table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
-          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD"
+          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
           <el-select v-model="filters.status" placeholder="状态" clearable style="width: 110px" @change="reload">
             <el-option v-for="s in TAOBAO_STATUS" :key="s" :label="s" :value="s" />

@@ -178,6 +178,7 @@ class ShipmentBase(MoneyIn):
     intl_tracking_no: Optional[str] = None
     status: str = ShipmentStatus.packing.value
     special_fee_jpy: Optional[int] = None
+    recipient: Optional[str] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
 
@@ -185,6 +186,13 @@ class ShipmentBase(MoneyIn):
     @classmethod
     def _status(cls, v: str) -> str:
         return _check(v, _SHIPMENT_STATUS, "集运状态")
+
+    @field_validator("special_fee_jpy")
+    @classmethod
+    def _nonneg_fee(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("特殊费不能为负数（退款/取消请用状态标记）")
+        return v
 
 
 class ShipmentCreate(ShipmentBase):
@@ -199,6 +207,7 @@ class ShipmentUpdate(MoneyIn):
     intl_tracking_no: Optional[str] = None
     status: Optional[str] = None
     special_fee_jpy: Optional[int] = None
+    recipient: Optional[str] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
 
@@ -206,6 +215,13 @@ class ShipmentUpdate(MoneyIn):
     @classmethod
     def _status(cls, v: Optional[str]) -> Optional[str]:
         return v if v is None else _check(v, _SHIPMENT_STATUS, "集运状态")
+
+    @field_validator("special_fee_jpy")
+    @classmethod
+    def _nonneg_fee(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("特殊费不能为负数（退款/取消请用状态标记）")
+        return v
 
 
 class TaobaoBrief(SQLModel):
@@ -226,6 +242,7 @@ class ShipmentRead(MoneyOut):
     intl_tracking_no: Optional[str] = None
     status: str
     special_fee_jpy: Optional[int] = None
+    recipient: Optional[str] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
     source: str
@@ -355,6 +372,7 @@ class StagingCreate(StagingBase):
 
 
 class StagingUpdate(StagingBase):
+    version: int                                       # 乐观锁必填
     status: Optional[str] = None
     items: Optional[list[StagingItemIn]] = None       # 给了就整体替换
 
@@ -366,6 +384,7 @@ class StagingUpdate(StagingBase):
 
 class StagingRead(StagingBase):
     id: int
+    version: int
     status: str
     imported_taobao_order_id: Optional[int] = None
     scraped_at: dt.datetime
@@ -386,3 +405,9 @@ class LayoutRead(SQLModel):
 
 class LayoutUpdate(SQLModel):
     columns: list[LayoutColumn]
+
+
+# --- 标签选项（列头可管理的下拉集）------------------------------------------
+
+class TagIn(SQLModel):
+    value: str

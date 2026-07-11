@@ -75,6 +75,7 @@ const columns = [
   { key: 'date', label: '日期', type: 'date', width: 130 },
   { key: 'shipment_no', label: '集运单号', type: 'text', minWidth: 120, placeholder: '集运单号' },
   { key: 'intl_tracking_no', label: '国际运单号', type: 'text', minWidth: 120 },
+  { key: 'recipient', label: '收货人', type: 'tag', field: 'recipient', width: 100 },
   { key: 'weight', label: '重量kg', type: 'decimal', width: 80 },
   { key: 'status', label: '状态', type: 'select', options: SHIPMENT_STATUS, width: 100 },
   { key: 'price_cny', label: '运费(元)', type: 'decimal', format: 'cny', width: 95 },
@@ -152,19 +153,19 @@ async function loadUnassigned() {
   const res = await taobaoApi.list({ unassigned: true, limit: 200 })
   unassignedOptions.value = res.items
 }
-async function attach(jfRow, tbId) {
+async function attach(shipmentRow, tbId) {
   if (!tbId) return
   try {
-    const updated = await shipmentApi.attachTaobao(jfRow.id, tbId)
-    Object.assign(jfRow, updated)
+    const updated = await shipmentApi.attachTaobao(shipmentRow.id, tbId)
+    Object.assign(shipmentRow, updated)
     await loadUnassigned()
     ElMessage.success('已关联')
   } catch (_) { /* 拦截器已提示（含 422：已挂靠其他单） */ }
 }
-async function detach(jfRow, tbRow) {
+async function detach(shipmentRow, tbRow) {
   try {
-    const updated = await shipmentApi.detachTaobao(jfRow.id, tbRow.id)
-    Object.assign(jfRow, updated)
+    const updated = await shipmentApi.detachTaobao(shipmentRow.id, tbRow.id)
+    Object.assign(shipmentRow, updated)
     await loadUnassigned()
     ElMessage.success('已移除')
   } catch (_) { /* 拦截器已提示 */ }
@@ -178,7 +179,6 @@ onMounted(() => { load(); loadUnassigned() })
 .ph { color: #5b6880; }
 .expand { padding: 12px 20px; }
 .ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }
-.tag { margin-right: 6px; }
 .add-line { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 .tb-pick { width: 320px; }
 .tb-opt { display: flex; flex-direction: column; line-height: 1.25; }

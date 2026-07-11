@@ -20,7 +20,7 @@
           <span :class="row.items && row.items.length ? '' : 'ph'">{{ itemSummary(row) }}</span>
         </template>
         <template #cell-status="{ row }">
-          <el-tag :type="stagingTag(row.status)" size="small" effect="dark">{{ row.status }}</el-tag>
+          <el-tag :style="stagingStyle(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
 
         <template #expand="{ row }">
@@ -40,7 +40,7 @@
 
         <template #actions="{ row }">
           <template v-if="row.imported_taobao_order_id">
-            <el-tag type="success" size="small">已导入 #{{ row.imported_taobao_order_id }}</el-tag>
+            <el-tag :style="stagingStyle('已导入')" size="small">已导入 #{{ row.imported_taobao_order_id }}</el-tag>
           </template>
           <template v-else>
             <el-button size="small" type="primary" @click="doImport(row)">导入</el-button>
@@ -60,11 +60,8 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { stagingApi } from '@/api'
-import { TAOBAO_STATUS } from '@/constants'
+import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
-
-const STAGING_STATUS = ['待处理', '已导入', '已忽略']
-const stagingTag = (s) => ({ 待处理: 'warning', 已导入: 'success', 已忽略: 'info' }[s] || 'info')
 
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: 140 },
@@ -72,7 +69,7 @@ const columns = [
   { key: 'shop', label: '店铺', type: 'text', minWidth: 110 },
   { key: 'price_cny', label: '人民币', type: 'decimal', format: 'cny', width: 100 },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天' },
-  { key: 'taobao_account', label: '淘宝号', type: 'text', width: 100 },
+  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
   { key: 'express_no', label: '快递号', type: 'text', width: 110 },
   { key: 'items', label: '物品', readonly: true, minWidth: 140, expand: true },
   { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: 100 },
@@ -114,12 +111,12 @@ function onPage(p) { page.value = p; load() }
 
 async function saveCell(row, key, value) {
   try {
-    const updated = await stagingApi.update(row.id, { [key]: value })
+    const updated = await stagingApi.update(row.id, { version: row.version, [key]: value })
     const { items, ...rest } = updated       // 不覆盖展开面板里未保存的物品编辑
     Object.assign(row, rest)
   } catch (e) {
     if (e.response?.status === 409) {
-      ElMessage.warning(e.response?.data?.detail || '订单号已存在，未保存')
+      ElMessage.warning(e.response?.data?.detail || '数据已变，已刷新')
       load()   // 冲突：刷新回退到服务器状态
     }
     // 非 409：拦截器已提示，单元格自动显示旧值，无需整页重拉
@@ -130,7 +127,7 @@ async function saveItems(row) {
   const items = (row.items || []).filter((it) => it.name && it.name.trim())
     .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1 }))
   try {
-    const updated = await stagingApi.update(row.id, { items })
+    const updated = await stagingApi.update(row.id, { version: row.version, items })
     Object.assign(row, updated)
     ElMessage.success('物品已保存')
   } catch (_) { load() }

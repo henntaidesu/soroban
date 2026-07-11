@@ -267,3 +267,50 @@
 
 - 方式：对 `backend/app`+`frontend/src` 全部 `.py/.vue/.js` 做大小写一致的整词替换（`junfeng→shipment`、`Junfeng→Shipment`、`JUNFENG→SHIPMENT`、`君丰→集运`），共 15 文件；两文件改名；无真实数据故 `create_all` 直接重灌演示库。docs 历史日志保留旧名作当时记录。
 - 自测：后端启动+重灌 OK，`/api/shipment` 200 / 旧 `/api/junfeng` 404，看板出 `shipment_jpy`；代码残留 junfeng/君丰 = **0**；后端 TestClient **20/20（attach/detach 边界）+ 14/14（退款/禁负）**、并发 **20/20**、无头 E2E **11/11**（菜单=集运订单无君丰、页面/URL、点选关联打 `/api/shipment/{id}/taobao/{tb}` 写 `shipment_order_id`、淘宝页「集运(点选)」列、看板、0 报错）全部对新接口重跑通过。
+
+### 第十四版：可管理的「标签」列（列头增删选项 + 单元格下拉选）
+- **需求**：淘宝号（账号 a/b…）是固定几个号，做成标签列——列头能加/删标签，行内拉下拉选。集运订单加「收货人」列，同款机制。
+- **后端**：新表 `TagOption(id, field, value)` + `UNIQUE(field, value)`；`routers/tags.py`：`GET/POST/DELETE /api/tags/{field}`（列出/去重添加/删除；添加用 sqlite `on_conflict_do_nothing` 原子去重、空值 422；删除只把标签移出可选集、**不动已用该值的历史行**）；字段白名单 `{taobao_account, recipient}`，未知字段全 422。`ShipmentOrder` 加可空 `recipient` 列（+ 三个 schema）。demo 预置 `taobao_account=[acctA,acctB]`、`recipient=[本人,家人,朋友]`。
+- **前端**：`NotionTable` 支持 `type:'tag'`+`field` 列：挂载时按字段拉取选项到 `tagOptions`；`cellCol()` 把标签列映射成 `select`（复用 GotionCell，渲染成 tag+下拉）；**列头** el-popover（齿轮图标，`@mousedown.stop` 防触发列拖拽）里管理该字段标签（可关闭的 el-tag 删除 + 输入框添加）。`api/tags`。
+- **页面**：淘宝 + 全部订单 的「淘宝号」列 text→tag（**共享同一个 `taobao_account` 标签集**）；集运订单加「收货人」tag 列。
+- 设计取舍：标签单色（灰）不做配色；删标签不改历史行值；筛选框仍是原来的输入框（未改成下拉）。
+- 自测：后端 TestClient **13/13**（列出/去重幂等/空值 422/字段隔离/删除/三动词白名单/集运 recipient 增改清空）；无头 E2E **11/11**（淘宝号渲染成标签、列头齿轮开管理弹窗列出 acctA/acctB、加 acctC 出现且持久化后端、单元格下拉含新标签且可选中、集运「收货人」列+标签+列头管理、0 报错）。
+
+### 第十五版：全项目对抗审查 + 修复（6 维度审查，15 确认，修 14 / 留 1）
+两个后台 workflow：标签功能审查（1 确认）+ 全项目审查（6 维度→逐条 skeptic 复核，25 raw→15 确认：1 高 9 中 5 低）。合并去重后**修 14 条**：
+- **金额一致性**：`special_fee_jpy` 是唯一漏网的金额输入（无非负校验，负值会静默压低 jpy_settled/看板合计）→ ShipmentBase/Update 加 `_nonneg_fee`（<0→422）。
+- **写穿乐观锁**：暂存写穿账本原来用裸 `order.version += 1`（绕过守卫，并发下丢失更新/吞 version 自增）→ 改走 `guarded_bump`（原子自增+409），与其余账本变更同一套。
+- **删单可重导**：从暂存导入的淘宝订单被软删后，暂存行永远卡「已导入」且不可重导 → 淘宝 `delete_order` 清暂存行挂靠、状态回「待处理」（对齐集运删除清子外键的做法）。
+- **挂靠竞态**：`attach_taobao` 原子 UPDATE 加 `EXISTS(集运单未软删)` 子查询，防极小窗内集运单被并发删导致挂到已删单。
+- **错误可读性**：① axios 拦截器展平 FastAPI 422 的 `detail` 数组，不再把「金额不能为负/汇率越界」等具体原因吞成通用「请求失败」；② 全局 IntegrityError 409 改成因果无关文案 + 记 `exc.orig` 到日志（不再误导为「单号重复」）。
+- **前端健壮**：③ 列布局拉取完成前（`layoutReady`）禁用列拖拽/拖宽，杜绝加载窗内用默认序覆盖已存布局；④ 标签拉取失败不再整会话卡空——列头弹窗 `@show` 重试（`loadTag`）。
+- **可读性/统一**：⑤ 清掉重命名遗留的 `jf` 词（后端 `jf_id/jf`→`shipment_id/shipment`、Query 描述「JF 页」→「集运页」；前端 `jfRow/jfId`→`shipment*`、`.jf-*` CSS→`.ship-*`）；⑥ `STAGING_STATUS/stagingTag` 归拢到 `constants.js`；⑦ 删 Shipment 死 CSS `.tag`；⑧ NotionTable 魔数 160/56/30 抽成 `DEFAULT_COL_W/ID_COL_W/EXPAND_COL_W`。
+- **有意保留 1 条**：`useLedgerTable` composable（4 页 CRUD 脚手架去重）——真 DRY，但对刚经历大改名的工作代码做四页级重构，风险>当下收益，记为后续。demo.py 里 `jf1/jf` 是一次性 seed 局部名、无 API/模型面，一并保留。
+- 自测：后端 TestClient **11/11**（特殊费禁负、删单后暂存回待处理+可重导、写穿 version 各+1 不吞增、写穿后旧 version→409、写穿仍正常）+ 既有 **20/20+14/14+13/13** 全过无回归；无头 E2E rename **11/11** / tags **11/11** / refund-smoke **7/7**。
+
+### 第十六版：暂存表补乐观锁（version）——为「爬虫多次更新同一行」铺路
+承接审查里「暂存无 version」那条：用户指出爬虫会反复更新同一暂存行，遂**给暂存表加 `version` 乐观锁**（此前它是唯一无锁的表）。
+- `guarded_bump` 泛化：`hasattr(model, "deleted_at")` 才加软删条件，使其可用于硬删的暂存表（`TaobaoStaging` 无 `deleted_at`）。
+- `TaobaoStaging` 加 `version`；`StagingRead`/`StagingUpdate` 带 `version`（更新必填）。
+- `update_staging` 先 `guarded_bump(TaobaoStaging, version)`（stale→409），再走已有的写穿账本逻辑（已导入行仍额外 `guarded_bump` 账本）；`import`/`ignore`/以及淘宝删单清暂存挂靠都 `version+1`，保持单调。前端暂存页 saveCell/saveItems 带上 `row.version`、409 刷新（冲突提示改通用文案）。
+- 价值：将来爬虫反复 upsert 同一行时，人若拿旧 version 编辑会 409-刷新而非静默覆盖；也让暂存与其余账本表一致。
+- 自测：后端 TestClient **16/16**（新建 v=1、正确 version→200+自增、旧 version→409、缺 version→422、import/ignore/删单各自 version+1、已导入行写穿需暂存 version 且账本 version 也+1、删后可重导）；curl 实测运行服务器：带 version 编辑落库、旧 version→409；既有 **20/20+14/14+13/13+11/11** 全过无回归。
+
+### 第十七版：标签调色盘（管理型标签列自动配色）
+- 需求：标签能有颜色。做成**预设调色盘 + 按值哈希自动配色**（用户认可「预设一套 7-10 个就够」）。
+- `constants.js`：`TAG_PALETTE`（10 色，暗色主题柔和底色 `rgba(...,.18)` + 同色系边框/文字）；`tagColor(v)` 用简单字符串哈希 `h=h*31+c` 映射到固定一色（同名同色、无需存储、循环）；`tagStyle(v)` 返回 inline 样式串。
+- 只作用于**管理型标签列**（`type:'tag'` → cellCol 标记 `tagColored`）：`GotionCell.tagAttrs(v)` 标签列用调色盘 `:style`、其余状态列仍用语义 `statusTagType` type；`NotionTable` 列头管理弹窗的标签也上色。`状态/导入状态` 等语义列不受影响。
+- 自测：headless **6/6**（淘宝号 acctA/acctB 各带调色盘 inline 色且不同、`状态`仍语义 type、收货人上色、无报错）+ 截图肉眼确认。纯前端、DB 未动。
+- 备注：当前是**自动配色**（按值哈希），非手动指定；若要「某标签手动挑色」需给标签存颜色字段 + 列头取色器，留待需要时加。
+
+### 第十八版：淘宝订单状态对齐淘宝交易状态（方便爬虫对接）
+- 原 `已付/已发/已收/退款/已取消` → 对齐淘宝交易状态：**待付款 / 待发货 / 待收货 / 交易成功 / 退款 / 交易关闭**（新增「待付款」，其余按淘宝措辞改名）。爬虫抓到的状态几乎 1:1 映射。
+- `TaobaoStatus` **枚举成员名保持不变**（`unpaid`(新)/`paid`/`shipped`/`received`/`refunded`/`cancelled`），只改 value——所以引用成员名的代码（`TaobaoBase.status` 默认值、`EXCLUDED_STATUSES`）自动跟随。
+- **看板排除**加入 `待付款`（未付款不计入），与 `退款`/`交易关闭` 一并排除；金额与物品仍照常显示。
+- 前端 `TAOBAO_STATUS` 六态 + `statusTagType` 配色（待发货=warning/待收货=primary/交易成功=success/退款=danger/待付款·交易关闭=info）；demo 状态整体重映射（`status="X"` 精确替换也覆盖 `order_status="X"`，不误伤集运「已发出」），并留一条暂存 `待付款` 演示新态。集运（打包中/已发出/已签收/已取消）不动。
+- 自测：看板 7/9 计入、合计 ¥26637 不变；旧值 `已付`→422、新值 `待发货`→200；后端 attach **20/20** · refund **15/15**（含待付款排除）· tags **13/13** · audit-fixes **11/11** · staging-lock **16/16**；前端 tagcolor **6/6** + refund-smoke **7/7**，截图确认六态渲染+配色。
+
+### 第十九版：标签风格统一为「柔和底色」
+- 用户偏好账号标签那套柔和底色，遂把**所有标签统一成同款观感**：`constants.js` 加 `typeStyle(type)`（EP 语义 type→柔和底色，复用调色盘蓝/绿/琥珀/红 + 灰）+ 派生 `statusStyle`/`stagingStyle`。
+- 状态标签（GotionCell 状态/订单状态格）、暂存「导入状态」+「已导入」徽标、侧栏汇率「旧」徽标，都从实心 `type + effect=dark` 改为柔和底色 `:style`；账号/收货人标签本就是这套。**语义色保留**（退款=红、交易成功=绿…），只是观感统一。
+- 自测：headless **8/8**（账号=调色盘、状态=柔和底色 inline、退款=红调、交易成功=绿调、收货人上色、无报错）+ 截图确认全表标签风格一致。纯前端、DB 未动。

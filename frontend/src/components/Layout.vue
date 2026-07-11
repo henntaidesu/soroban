@@ -20,7 +20,7 @@
       <div class="foot">
         <div class="fx" v-if="fx.rate">
           1元 = {{ fx.rate }}円
-          <el-tag v-if="fx.stale" size="small" type="warning" effect="dark">旧</el-tag>
+          <el-tag v-if="fx.stale" size="small" :style="typeStyle('warning')">旧</el-tag>
         </div>
         <div class="user">
           <el-icon><User /></el-icon><span>{{ userName }}</span>
@@ -39,6 +39,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fxApi } from '@/api'
+import { typeStyle } from '@/constants'
 
 const router = useRouter()
 const nav = [

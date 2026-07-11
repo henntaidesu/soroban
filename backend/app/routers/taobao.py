@@ -5,11 +5,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import ShipmentOrder, OrderItem, TaobaoOrder, User
+from ..models import ShipmentOrder, OrderItem, StagingStatus, TaobaoOrder, TaobaoStaging, User, utcnow
 from ..schemas import TaobaoCreate, TaobaoRead, TaobaoUpdate
 from .common import conflict, guarded_bump, not_found, soft_delete
 
@@ -18,11 +19,11 @@ router = APIRouter(
 )
 
 
-def _check_shipment(session: Session, jf_id):
+def _check_shipment(session: Session, shipment_id):
     """挂靠的集运订单必须存在且未软删（防悬空/无效外链）。"""
-    if jf_id is not None:
-        jf = session.get(ShipmentOrder, jf_id)
-        if not jf or jf.deleted_at is not None:
+    if shipment_id is not None:
+        shipment = session.get(ShipmentOrder, shipment_id)
+        if not shipment or shipment.deleted_at is not None:
             raise HTTPException(status_code=422, detail="所属集运订单不存在或已删除")
 
 
@@ -35,7 +36,7 @@ def list_orders(
     taobao_account: Optional[str] = None,
     express_no: Optional[str] = None,
     shipment_order_id: Optional[int] = None,
-    unassigned: Optional[bool] = Query(None, description="仅未挂靠集运的订单（供 JF 页点选添加）"),
+    unassigned: Optional[bool] = Query(None, description="仅未挂靠集运的订单（供集运页点选添加）"),
     q: Optional[str] = Query(None, description="按订单号搜索"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -127,5 +128,13 @@ def delete_order(order_id: int, session: Session = Depends(get_session)):
         not_found("淘宝订单")
     soft_delete(order)
     session.add(order)
+    # 若此单是从暂存导入的：删除后把暂存行的挂靠清掉、状态回「待处理」，使其可重新导入
+    # （对齐集运删除时清子订单外键的做法，避免暂存行永远卡在「已导入」且指向已删订单）。
+    session.execute(
+        sa_update(TaobaoStaging)
+        .where(TaobaoStaging.imported_taobao_order_id == order_id)
+        .values(imported_taobao_order_id=None, status=StagingStatus.pending.value,
+                version=TaobaoStaging.version + 1, updated_at=utcnow())
+    )
     session.commit()
     return {"ok": True}

@@ -24,8 +24,8 @@ export const shipmentApi = {
   create: (data) => http.post('/shipment', data),
   update: (id, data) => http.patch(`/shipment/${id}`, data),
   remove: (id) => http.delete(`/shipment/${id}`),
-  attachTaobao: (jfId, tbId) => http.post(`/shipment/${jfId}/taobao/${tbId}`),
-  detachTaobao: (jfId, tbId) => http.delete(`/shipment/${jfId}/taobao/${tbId}`),
+  attachTaobao: (shipmentId, tbId) => http.post(`/shipment/${shipmentId}/taobao/${tbId}`),
+  detachTaobao: (shipmentId, tbId) => http.delete(`/shipment/${shipmentId}/taobao/${tbId}`),
 }
 
 export const miscApi = {
@@ -50,4 +50,10 @@ export const fxApi = { get: () => http.get('/fx') }
 export const layoutApi = {
   get: (table) => http.get(`/layout/${table}`),
   save: (table, columns) => http.put(`/layout/${table}`, { columns }),
+}
+
+export const tagsApi = {
+  list: (field) => http.get(`/tags/${field}`),
+  add: (field, value) => http.post(`/tags/${field}`, { value }),
+  remove: (field, value) => http.delete(`/tags/${field}/${encodeURIComponent(value)}`),
 }

@@ -30,11 +30,12 @@ class Source(str, Enum):
 
 
 class TaobaoStatus(str, Enum):
-    paid = "已付"
-    shipped = "已发"
-    received = "已收"
+    unpaid = "待付款"       # 等待买家付款
+    paid = "待发货"         # 买家已付款、待卖家发货
+    shipped = "待收货"      # 卖家已发货
+    received = "交易成功"
     refunded = "退款"
-    cancelled = "已取消"
+    cancelled = "交易关闭"
 
 
 class ShipmentStatus(str, Enum):
@@ -50,12 +51,13 @@ class StagingStatus(str, Enum):
     ignored = "已忽略"
 
 
-# 看板合计要排除的状态：取消/退款都不计入合计（金额与物品仍照常显示，只是不加总）。
-# 不再用「负数行」冲抵退款——打上退款/取消标记即自动不计入。
+# 看板合计要排除的状态：未付款/退款/交易关闭都不计入（金额与物品仍照常显示，只是不加总）。
+# 不再用「负数行」冲抵退款——打上退款/关闭标记即自动不计入。
 EXCLUDED_STATUSES = {
-    TaobaoStatus.cancelled.value,
-    TaobaoStatus.refunded.value,
-    ShipmentStatus.cancelled.value,
+    TaobaoStatus.unpaid.value,          # 待付款：还没花钱，不计入
+    TaobaoStatus.refunded.value,        # 退款
+    TaobaoStatus.cancelled.value,       # 交易关闭
+    ShipmentStatus.cancelled.value,     # 集运已取消
 }
 
 
@@ -166,6 +168,7 @@ class ShipmentOrder(LedgerBase, table=True):
     intl_tracking_no: Optional[str] = None                 # 国际运单号
     status: str = Field(default=ShipmentStatus.packing.value, index=True)
     special_fee_jpy: Optional[int] = Field(default=None)    # 特殊费（恒日元：关税/消费税等）
+    recipient: Optional[str] = None                         # 收货人（标签，从可管理集里选）
 
     taobao_orders: list[TaobaoOrder] = Relationship(back_populates="shipment_order")
 
@@ -197,6 +200,17 @@ class Setting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: Optional[str] = None
     updated_at: dt.datetime = Field(default_factory=utcnow)
+
+
+# --- 标签选项（列头可管理的下拉集：如淘宝账号、收货人）----------------------
+
+class TagOption(SQLModel, table=True):
+    __table_args__ = (
+        Index("ix_tagoption_field_value", "field", "value", unique=True),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    field: str = Field(index=True)      # 归属字段：taobao_account / recipient
+    value: str
 
 
 # --- 列布局（每个表的列顺序+宽度，存后端，所有人一致）------------------------
@@ -235,6 +249,7 @@ class TaobaoStaging(SQLModel, table=True):
     imported_taobao_order_id: Optional[int] = Field(
         default=None, foreign_key="taobaoorder.id"
     )
+    version: int = Field(default=1)                         # 乐观锁（人工/爬虫并发编辑同一暂存行）
     scraped_at: dt.datetime = Field(default_factory=utcnow)
     updated_at: dt.datetime = Field(default_factory=utcnow)
 

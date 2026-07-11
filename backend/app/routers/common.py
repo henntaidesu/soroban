@@ -23,14 +23,11 @@ def guarded_bump(session: Session, model, obj_id: int, expected_version: int) ->
     """原子地在 DB 层用 `WHERE version=expected` 守卫并自增 version（同时刷新 updated_at）。
     返回 False 表示版本已变（并发/交错写），调用方应抛 409。此 UPDATE 与后续的字段改动
     在同一事务提交，保证并发下不会丢失更新。"""
+    conds = [model.id == obj_id, model.version == expected_version]
+    if hasattr(model, "deleted_at"):                    # 暂存表用硬删、无 deleted_at 列，跳过该条件
+        conds.append(model.deleted_at.is_(None))
     res = session.execute(
-        sa_update(model)
-        .where(
-            model.id == obj_id,
-            model.version == expected_version,
-            model.deleted_at.is_(None),
-        )
-        .values(version=model.version + 1, updated_at=utcnow())
+        sa_update(model).where(*conds).values(version=model.version + 1, updated_at=utcnow())
     )
     return res.rowcount == 1
 

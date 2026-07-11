@@ -54,8 +54,10 @@ http.interceptors.response.use(
     }
     // 409（乐观锁冲突）交给页面处理，不在这里弹通用错误
     if (err.response?.status !== 409) {
-      const msg = err.response?.data?.detail || err.message || '请求失败'
-      ElMessage.error(typeof msg === 'string' ? msg : '请求失败')
+      let detail = err.response?.data?.detail
+      // FastAPI 校验错误的 detail 是数组（[{msg,loc}...]）——展平成可读文案，别把具体原因丢成通用提示
+      if (Array.isArray(detail)) detail = detail.map((e) => e?.msg || String(e)).join('；')
+      ElMessage.error((typeof detail === 'string' && detail) ? detail : (err.message || '请求失败'))
     }
     return Promise.reject(err)
   }

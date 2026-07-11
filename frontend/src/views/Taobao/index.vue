@@ -18,11 +18,11 @@
 
         <template #cell-shipment_order_id="{ row }">
           <el-select :model-value="row.shipment_order_id" clearable filterable placeholder="未集运"
-                     size="small" class="jf-pick" @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
+                     size="small" class="ship-pick" @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
             <el-option v-for="j in shipmentOptions" :key="j.id" :label="j.shipment_no || ('#' + j.id)" :value="j.id">
-              <div class="jf-opt">
+              <div class="ship-opt">
                 <b>{{ j.shipment_no || ('#' + j.id) }}</b>
-                <span class="jf-meta">{{ j.date }} · {{ j.status }} · 运费{{ fmtJPY(j.jpy_settled) }}</span>
+                <span class="ship-meta">{{ j.date }} · {{ j.status }} · 运费{{ fmtJPY(j.jpy_settled) }}</span>
               </div>
             </el-option>
           </el-select>
@@ -69,7 +69,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 const columns = [
   { key: 'date', label: '日期', type: 'date', width: 130 },
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 120, placeholder: '订单号' },
-  { key: 'taobao_account', label: '淘宝号', type: 'text', width: 90 },
+  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
   { key: 'express_no', label: '快递号', type: 'text', width: 110 },
   { key: 'shop', label: '店铺', type: 'text', minWidth: 80 },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: 90 },
@@ -176,9 +176,9 @@ onMounted(() => { loadShipment(); load() })
 .ex-hint { color: #7d8aa3; font-size: 12px; margin-top: 8px; }
 .item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 /* 集运点选：内嵌无边框，像格子里的选择 */
-.jf-pick { width: 100%; }
-.jf-pick :deep(.el-select__wrapper),
-.jf-pick :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }
-.jf-opt { display: flex; flex-direction: column; line-height: 1.25; }
-.jf-meta { color: #7d8aa3; font-size: 11px; }
+.ship-pick { width: 100%; }
+.ship-pick :deep(.el-select__wrapper),
+.ship-pick :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }
+.ship-opt { display: flex; flex-direction: column; line-height: 1.25; }
+.ship-meta { color: #7d8aa3; font-size: 11px; }
 </style>

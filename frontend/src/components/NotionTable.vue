@@ -5,10 +5,10 @@
     <div class="gtn-scroll" v-loading="loading">
       <table class="gtn-table" :style="{ width: totalWidth + 'px' }">
         <colgroup>
-          <col style="width: 56px" />
+          <col :style="{ width: ID_COL_W + 'px' }" />
           <col v-if="hasActions" :style="{ width: actionsWidth + 'px' }" />
-          <col v-if="expandable" style="width: 30px" />
-          <col v-for="col in cols" :key="col.key" :style="{ width: (col.width || 160) + 'px' }" />
+          <col v-if="expandable" :style="{ width: EXPAND_COL_W + 'px' }" />
+          <col v-for="col in cols" :key="col.key" :style="{ width: (col.width || DEFAULT_COL_W) + 'px' }" />
         </colgroup>
 
         <thead>
@@ -18,12 +18,29 @@
             <th v-if="expandable" class="gtn-th"></th>
             <th v-for="col in cols" :key="col.key" class="gtn-th"
                 :class="{ drag: !!tableName, dragging: dragKey === col.key, dragover: overKey === col.key }"
-                :draggable="!!tableName"
+                :draggable="!!tableName && layoutReady"
                 @dragstart="onDragStart($event, col)" @dragover.prevent="onDragOver(col)"
                 @dragleave="onDragLeave(col)" @drop="onDrop(col)" @dragend="onDragEnd">
               <div class="gtn-th-inner">
                 <span class="gtn-col-name">{{ col.label }}</span>
-                <div v-if="tableName" class="gtn-resize" title="拖动改列宽"
+                <el-popover v-if="col.type === 'tag'" trigger="click" :width="240" placement="bottom-start" @show="loadTag(col.field)">
+                  <template #reference>
+                    <el-icon class="gtn-tagcfg" title="管理标签" @click.stop @mousedown.stop @dragstart.prevent.stop><Setting /></el-icon>
+                  </template>
+                  <div class="gtn-tagmgr" @mousedown.stop @click.stop>
+                    <div class="gtn-tagmgr-title">{{ col.label }} · 标签（列头管理）</div>
+                    <div class="gtn-tag-list">
+                      <el-tag v-for="v in (tagOptions[col.field] || [])" :key="v" size="small" :style="tagStyle(v)"
+                              closable @close="removeTag(col.field, v)">{{ v }}</el-tag>
+                      <span v-if="!(tagOptions[col.field] || []).length" class="gtn-tag-empty">暂无标签</span>
+                    </div>
+                    <div class="gtn-tag-add">
+                      <el-input v-model="newTag[col.field]" size="small" placeholder="新标签名" @keyup.enter="addTag(col.field)" />
+                      <el-button size="small" type="primary" @click="addTag(col.field)">添加</el-button>
+                    </div>
+                  </div>
+                </el-popover>
+                <div v-if="tableName && layoutReady" class="gtn-resize" title="拖动改列宽"
                      @mousedown.stop.prevent="startResize($event, col)" @dragstart.prevent.stop />
               </div>
             </th>
@@ -40,7 +57,7 @@
             <td v-if="expandable"></td>
             <td v-for="col in cols" :key="'n-' + col.key" class="gtn-td">
               <GotionCell v-if="!col.readonly && !$slots['cell-' + col.key]"
-                          :model-value="newRow[col.key]" :col="col" @change="(v) => onNew(col, v)" />
+                          :model-value="newRow[col.key]" :col="cellCol(col)" @change="(v) => onNew(col, v)" />
             </td>
           </tr>
 
@@ -58,7 +75,7 @@
                   :class="{ 'gtn-td-clickexp': col.expand && expandable }"
                   @click="col.expand && expandable ? toggle(row.id) : null">
                 <div v-if="$slots['cell-' + col.key]" class="gtn-slot"><slot :name="'cell-' + col.key" :row="row" /></div>
-                <GotionCell v-else :model-value="row[col.key]" :col="col" @change="(v) => $emit('save', row, col.key, v)" />
+                <GotionCell v-else :model-value="row[col.key]" :col="cellCol(col)" @change="(v) => $emit('save', row, col.key, v)" />
               </td>
             </tr>
             <tr v-if="expandable && open.has(row.id)" class="gtn-exp-row">
@@ -73,9 +90,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, useSlots, watch } from 'vue'
-import { ArrowRight, Check, Delete, Plus } from '@element-plus/icons-vue'
+import { ArrowRight, Check, Delete, Plus, Setting } from '@element-plus/icons-vue'
 import GotionCell from './GotionCell.vue'
-import { layoutApi } from '@/api'
+import { layoutApi, tagsApi } from '@/api'
+import { tagStyle } from '@/constants'
 
 const props = defineProps({
   columns: { type: Array, required: true },
@@ -89,17 +107,24 @@ const props = defineProps({
 const emit = defineEmits(['save', 'add', 'delete'])
 const slots = useSlots()
 
+const DEFAULT_COL_W = 160   // 无显式 width 的列默认宽
+const ID_COL_W = 56         // 最左 ID/删除/新建 列
+const EXPAND_COL_W = 30     // 展开箭头列
+const layoutReady = ref(false)   // 列布局拉取完成前禁用拖拽/拖宽，避免用默认序覆盖已存布局
+
 const open = reactive(new Set())
 const newRow = reactive({})
 const cols = ref([])
 let savedLayout = []
 let dirtyDuringLoad = false   // 用户在初始拉取期间改过布局？改过就别用 GET 结果覆盖
+const tagOptions = reactive({})   // { field: [值...] } 标签下拉集，列头可增删
+const newTag = reactive({})       // { field: 输入中的新标签名 }
 
 const hasActions = computed(() => !!slots.actions)
 const colspan = computed(() => 1 + (props.expandable ? 1 : 0) + cols.value.length + (hasActions.value ? 1 : 0))
 const totalWidth = computed(() =>
-  56 + (props.expandable ? 30 : 0)
-  + cols.value.reduce((s, c) => s + (c.width || 160), 0)
+  ID_COL_W + (props.expandable ? EXPAND_COL_W : 0)
+  + cols.value.reduce((s, c) => s + (c.width || DEFAULT_COL_W), 0)
   + (hasActions.value ? Number(props.actionsWidth) : 0),
 )
 const hasNew = computed(() =>
@@ -121,6 +146,7 @@ function buildCols() {
 watch(() => props.columns, buildCols)
 onMounted(async () => {
   buildCols()
+  loadTags()
   if (props.tableName) {
     try {
       const r = await layoutApi.get(props.tableName)
@@ -130,12 +156,33 @@ onMounted(async () => {
       }
     } catch (_) { /* 忽略：用默认列 */ }
   }
+  layoutReady.value = true   // 布局就绪，开放拖拽/拖宽
 })
 function saveLayout() {
-  if (!props.tableName) return
+  if (!props.tableName || !layoutReady.value) return   // 布局未就绪不保存，避免用默认序覆盖已存布局
   dirtyDuringLoad = true
-  savedLayout = cols.value.map((c) => ({ key: c.key, width: Math.round(c.width || 160) }))
+  savedLayout = cols.value.map((c) => ({ key: c.key, width: Math.round(c.width || DEFAULT_COL_W) }))
   layoutApi.save(props.tableName, savedLayout).catch(() => {})
+}
+
+// —— 标签列：渲染成 select，选项来自可管理的标签集 ——
+function cellCol(col) {
+  return col.type === 'tag' ? { ...col, type: 'select', options: tagOptions[col.field] || [], tagColored: true } : col
+}
+async function loadTag(field) {   // 单字段拉取；失败保留旧值/置空，供列头弹窗 @show 重试
+  try { tagOptions[field] = await tagsApi.list(field) } catch (_) { if (!tagOptions[field]) tagOptions[field] = [] }
+}
+async function loadTags() {
+  const fields = [...new Set(props.columns.filter((c) => c.type === 'tag').map((c) => c.field))]
+  await Promise.all(fields.map((f) => loadTag(f)))
+}
+async function addTag(field) {
+  const v = (newTag[field] || '').trim()
+  if (!v) return
+  try { tagOptions[field] = await tagsApi.add(field, v); newTag[field] = '' } catch (_) { /* 拦截器已提示 */ }
+}
+async function removeTag(field, value) {
+  try { tagOptions[field] = await tagsApi.remove(field, value) } catch (_) { /* 拦截器已提示 */ }
 }
 
 function toggle(id) { open.has(id) ? open.delete(id) : open.add(id) }
@@ -186,7 +233,7 @@ function startResize(e, col) {
   resizing = true
   rzCol = col
   rzX = e.clientX
-  rzW = col.width || 160
+  rzW = col.width || DEFAULT_COL_W
   window.addEventListener('mousemove', onResize)
   window.addEventListener('mouseup', stopResize)
 }
@@ -244,4 +291,11 @@ function stopResize() {
 .gtn-new td { background: #10192c; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
 .gtn-new-num { color: #5c6b85; cursor: pointer; }
 .gtn-new-num:hover { color: #67c23a; background: rgba(103, 194, 58, 0.1); }
+
+.gtn-tagcfg { margin-left: 4px; color: #6b7a93; cursor: pointer; font-size: 13px; }
+.gtn-tagcfg:hover { color: #67c23a; }
+.gtn-tagmgr-title { color: #9ba8bf; font-size: 12px; margin-bottom: 8px; }
+.gtn-tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.gtn-tag-empty { color: #5b6880; font-size: 12px; }
+.gtn-tag-add { display: flex; gap: 6px; }
 </style>

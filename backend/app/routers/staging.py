@@ -24,7 +24,7 @@ from ..models import (
     utcnow,
 )
 from ..schemas import StagingCreate, StagingItemRead, StagingRead, StagingUpdate, TaobaoRead
-from .common import not_found
+from .common import conflict, guarded_bump, not_found
 
 router = APIRouter(
     prefix="/api/staging", tags=["staging"], dependencies=[Depends(get_current_user)]
@@ -117,23 +117,27 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     row = session.get(TaobaoStaging, row_id)
     if not row:
         not_found("暂存记录")
-    data = payload.model_dump(exclude_unset=True, exclude={"items"})
+    # 暂存行乐观锁：加载后被爬虫/他人改过 → 409，前端刷新（version 原子自增 + 刷新 updated_at）
+    if not guarded_bump(session, TaobaoStaging, row_id, payload.version):
+        conflict()
+    data = payload.model_dump(exclude_unset=True, exclude={"items", "version"})
     order = _linked_order(session, row)
 
     if order is not None:
-        # 已导入：共享字段写穿到账本（唯一真源），仅「导入状态」留在暂存自身
+        # 已导入：共享字段写穿到账本（唯一真源），仅「导入状态」留在暂存自身。
+        # 账本侧再走一次乐观锁：原子自增账本 version，让淘宝页也能察觉此次改动。
+        if not guarded_bump(session, TaobaoOrder, order.id, order.version):
+            conflict()
         for key, value in data.items():
             if key in _SHARED_TO_ORDER:
                 setattr(order, _SHARED_TO_ORDER[key], value)
             elif key == "status":
                 row.status = value
         order.compute_money()
-        order.version += 1                              # 让账本页的乐观锁能察觉此次改动
         if payload.items is not None:                   # 物品也写穿账本（[] = 清空）
             order.items.clear()
             for it in payload.items:
                 order.items.append(OrderItem(name=it.name, quantity=it.quantity))
-        row.updated_at = utcnow()
         session.add(order)
         session.add(row)
         session.commit()                                # order_no 撞账本唯一索引 → IntegrityError → 409
@@ -147,7 +151,6 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
         row.items.clear()
         for it in payload.items:
             row.items.append(StagingItem(name=it.name, quantity=it.quantity))
-    row.updated_at = utcnow()
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -170,6 +173,7 @@ def ignore_staging(row_id: int, session: Session = Depends(get_session)):
     if not row:
         not_found("暂存记录")
     row.status = StagingStatus.ignored.value
+    row.version += 1
     row.updated_at = utcnow()
     session.add(row)
     session.commit()
@@ -212,6 +216,7 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
             status=StagingStatus.imported.value,
             order_status=order.status,          # 快照对齐账本（此后以账本为准，读时覆盖）
             imported_taobao_order_id=order.id,
+            version=TaobaoStaging.version + 1,
             updated_at=utcnow(),
         )
     )

@@ -10,13 +10,13 @@
               placement="bottom-start" @update:visible="(v) => !v && (editing = false)">
     <template #reference>
       <div class="gtn-disp sel" @click="editing = !editing">
-        <el-tag v-if="modelValue" :type="tag(modelValue)" effect="dark" size="small">{{ modelValue }}</el-tag>
+        <el-tag v-if="modelValue" v-bind="tagAttrs(modelValue)" size="small">{{ modelValue }}</el-tag>
         <span v-else class="ph">{{ col.placeholder || '选择' }}</span>
       </div>
     </template>
     <div class="gtn-opts">
       <div v-for="o in col.options" :key="o" class="gtn-opt" :class="{ active: modelValue === o }" @click="choose(o)">
-        <el-tag :type="tag(o)" effect="dark" size="small">{{ o }}</el-tag>
+        <el-tag v-bind="tagAttrs(o)" size="small">{{ o }}</el-tag>
       </div>
       <div v-if="modelValue" class="gtn-opt clear" @click="choose(null)">清除</div>
     </div>
@@ -49,7 +49,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fmtCNY, fmtJPY } from '@/utils/money'
-import { statusTagType } from '@/constants'
+import { statusStyle, tagStyle } from '@/constants'
 
 const props = defineProps({
   modelValue: { default: null },
@@ -60,7 +60,10 @@ const emit = defineEmits(['change'])
 const editing = ref(false)
 const editVal = ref(null)
 const inp = ref(null)
-const tag = statusTagType
+// 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
+function tagAttrs(v) {
+  return { style: props.col.tagColored ? tagStyle(v) : statusStyle(v) }
+}
 
 const disp = computed(() => {
   const v = props.modelValue

@@ -112,40 +112,44 @@ def update_order(order_id: int, payload: ShipmentUpdate, session: Session = Depe
     return _read(session, order)
 
 
-@router.post("/{jf_id}/taobao/{tb_id}", response_model=ShipmentRead)
-def attach_taobao(jf_id: int, tb_id: int, session: Session = Depends(get_session)):
+@router.post("/{shipment_id}/taobao/{tb_id}", response_model=ShipmentRead)
+def attach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_session)):
     """把一个淘宝订单挂到本集运单（点选添加）。同一个外键 shipment_order_id，与淘宝页共用。
     仅允许「未挂靠」的淘宝单：已挂在别的集运单 → 422（先移除再加，防误抢）。"""
-    jf = session.get(ShipmentOrder, jf_id)
-    if not jf or jf.deleted_at is not None:
+    shipment = session.get(ShipmentOrder, shipment_id)
+    if not shipment or shipment.deleted_at is not None:
         not_found("集运订单")
     tb = session.get(TaobaoOrder, tb_id)
     if not tb or tb.deleted_at is not None:
         not_found("淘宝订单")
-    if tb.shipment_order_id == jf_id:
-        return _read(session, jf)                     # 已挂本单，幂等
-    # 原子挂载：仅当 DB 里仍未挂靠（且未软删）才成功，靠 rowcount 判定 —— 避免
-    # 「读-判断-写」在并发下双挂/误抢；version 在 DB 层自增，不丢失并发的自增（与 guarded_bump 同风格）。
+    if tb.shipment_order_id == shipment_id:
+        return _read(session, shipment)               # 已挂本单，幂等
+    # 原子挂载：仅当淘宝单在 DB 里仍未挂靠（且未软删）、且集运单当前仍存活时才成功，靠 rowcount 判定。
+    # 避免「读-判断-写」在并发下双挂/误抢；EXISTS 子查询防极小竞态窗内集运单被并发软删导致挂到已删单；
+    # version 在 DB 层自增，不丢失并发的自增（与 guarded_bump 同风格）。
     res = session.execute(
         sa_update(TaobaoOrder)
         .where(
             TaobaoOrder.id == tb_id,
             TaobaoOrder.shipment_order_id.is_(None),
             TaobaoOrder.deleted_at.is_(None),
+            select(ShipmentOrder.id)
+            .where(ShipmentOrder.id == shipment_id, ShipmentOrder.deleted_at.is_(None))
+            .exists(),
         )
-        .values(shipment_order_id=jf_id, version=TaobaoOrder.version + 1, updated_at=utcnow())
+        .values(shipment_order_id=shipment_id, version=TaobaoOrder.version + 1, updated_at=utcnow())
     )
-    if res.rowcount != 1:                              # 已被（含并发）挂到别的集运单
+    if res.rowcount != 1:                             # 已被并发挂到别的集运单，或集运单已被并发删除
         raise HTTPException(status_code=422, detail="该淘宝订单已挂靠其他集运单，请先移除")
     session.commit()
-    return _read(session, jf)
+    return _read(session, shipment)
 
 
-@router.delete("/{jf_id}/taobao/{tb_id}", response_model=ShipmentRead)
-def detach_taobao(jf_id: int, tb_id: int, session: Session = Depends(get_session)):
+@router.delete("/{shipment_id}/taobao/{tb_id}", response_model=ShipmentRead)
+def detach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_session)):
     """从本集运单移除一个淘宝订单（解除外键）。仅当它确实挂在本单才动（幂等）。"""
-    jf = session.get(ShipmentOrder, jf_id)
-    if not jf or jf.deleted_at is not None:
+    shipment = session.get(ShipmentOrder, shipment_id)
+    if not shipment or shipment.deleted_at is not None:
         not_found("集运订单")
     tb = session.get(TaobaoOrder, tb_id)
     if not tb or tb.deleted_at is not None:
@@ -153,11 +157,11 @@ def detach_taobao(jf_id: int, tb_id: int, session: Session = Depends(get_session
     # 原子解除：仅当它确实挂在本单才动（幂等）；version 在 DB 层自增，不丢并发自增。
     session.execute(
         sa_update(TaobaoOrder)
-        .where(TaobaoOrder.id == tb_id, TaobaoOrder.shipment_order_id == jf_id)
+        .where(TaobaoOrder.id == tb_id, TaobaoOrder.shipment_order_id == shipment_id)
         .values(shipment_order_id=None, version=TaobaoOrder.version + 1, updated_at=utcnow())
     )
     session.commit()
-    return _read(session, jf)
+    return _read(session, shipment)
 
 
 @router.delete("/{order_id}")

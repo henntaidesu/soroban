@@ -32,10 +32,10 @@ const columns = [
   { key: 'date', label: '日期', type: 'date', width: 140 },
   { key: 'name', label: '名称', type: 'text', minWidth: 150, placeholder: '名称' },
   { key: 'category', label: '分类', type: 'text', width: 120 },
-  { key: 'price_cny', label: '人民币', type: 'decimal', format: 'cny', width: 110 },
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110 },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 90 },
-  { key: 'jpy_override', label: '覆盖¥', type: 'int', format: 'jpy', width: 100, placeholder: '实付日元' },
-  { key: 'jpy_settled', label: '结算¥', format: 'jpy', readonly: true, width: 120 },
+  { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
+  { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 120 },
 ]
 
 const rows = ref([])

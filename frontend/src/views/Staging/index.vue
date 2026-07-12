@@ -66,7 +66,7 @@ const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: 140 },
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 130, placeholder: '订单号' },
   { key: 'shop', label: '店铺', type: 'text', minWidth: 110 },
-  { key: 'price_cny', label: '人民币', type: 'decimal', format: 'cny', width: 100 },
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110 },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天' },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
   { key: 'express_no', label: '快递号', type: 'text', width: 110 },

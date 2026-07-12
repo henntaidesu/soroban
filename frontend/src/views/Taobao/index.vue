@@ -98,10 +98,10 @@ const columns = [
   { key: 'express_no', label: '快递号', type: 'text', width: 110 },
   { key: 'shop', label: '店铺', type: 'text', minWidth: 80 },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: 90, clearable: false },
-  { key: 'price_cny', label: '人民币', type: 'decimal', format: 'cny', width: 95 },
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110 },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 75 },
-  { key: 'jpy_override', label: '覆盖¥', type: 'int', format: 'jpy', width: 95, placeholder: '实付日元' },
-  { key: 'jpy_settled', label: '结算¥', format: 'jpy', readonly: true, width: 100 },
+  { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
+  { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 110 },
   { key: 'shipment_order_id', label: '集运(点选)', readonly: true, width: 176 },
   { key: 'items', label: '物品', readonly: true, minWidth: 110, expand: true },
 ]

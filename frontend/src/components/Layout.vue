@@ -1,33 +1,49 @@
 <template>
   <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-logo">算</span>
-        <div class="brand-text">
-          <div class="brand-title">算盤 soroban</div>
-          <div class="brand-sub">代购集运记账</div>
-        </div>
-      </div>
+    <!-- 手机：菜单按钮 + 遮罩挂到 body（避免父级 transform 破坏 fixed 定位） -->
+    <Teleport to="body">
+      <button v-if="isMobile && !drawerOpen" type="button" class="sb-fab" aria-label="打开菜单" @click="drawerOpen = true">
+        <el-icon :size="22"><Fold /></el-icon>
+      </button>
+    </Teleport>
+    <Teleport to="body">
+      <div v-if="isMobile && drawerOpen" class="sb-mask" @click="drawerOpen = false" />
+    </Teleport>
 
-      <el-menu router :default-active="$route.path" class="menu" background-color="#0f1728"
-               text-color="#9ba8bf" active-text-color="#ffffff">
-        <el-menu-item v-for="m in nav" :key="m.path" :index="m.path">
-          <el-icon><component :is="m.icon" /></el-icon>
-          <span>{{ m.title }}</span>
-        </el-menu-item>
-      </el-menu>
+    <!-- 侧边栏：电脑常驻；手机变成从左滑入的抽屉（teleport 到 body） -->
+    <Teleport to="body" :disabled="!isMobile">
+      <aside class="sidebar" :class="{ 'sidebar--mobile': isMobile, 'sidebar--open': isMobile && drawerOpen }">
+        <div class="brand">
+          <span class="brand-logo">算</span>
+          <div class="brand-text">
+            <div class="brand-title">算盤 soroban</div>
+            <div class="brand-sub">代购集运记账</div>
+          </div>
+          <el-button v-if="isMobile" text class="brand-close" aria-label="关闭菜单" @click="drawerOpen = false">
+            <el-icon :size="18"><Close /></el-icon>
+          </el-button>
+        </div>
 
-      <div class="foot">
-        <div class="fx" v-if="fx.rate">
-          1元 = {{ fx.rate }}円
-          <el-tag v-if="fx.stale" size="small" :style="typeStyle('warning')">旧</el-tag>
+        <el-menu router :default-active="$route.path" class="menu" background-color="#0f1728"
+                 text-color="#9ba8bf" active-text-color="#ffffff" @select="onSelect">
+          <el-menu-item v-for="m in nav" :key="m.path" :index="m.path">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <span>{{ m.title }}</span>
+          </el-menu-item>
+        </el-menu>
+
+        <div class="foot">
+          <div class="fx" v-if="fx.rate">
+            1元 = {{ fx.rate }}円
+            <el-tag v-if="fx.stale" size="small" :style="typeStyle('warning')">旧</el-tag>
+          </div>
+          <div class="user">
+            <el-icon><User /></el-icon><span>{{ userName }}</span>
+          </div>
+          <el-button size="small" text bg @click="logout">退出登录</el-button>
         </div>
-        <div class="user">
-          <el-icon><User /></el-icon><span>{{ userName }}</span>
-        </div>
-        <el-button size="small" text bg @click="logout">退出登录</el-button>
-      </div>
-    </aside>
+      </aside>
+    </Teleport>
 
     <main class="content">
       <router-view />
@@ -36,12 +52,13 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { fxApi } from '@/api'
 import { typeStyle } from '@/constants'
 
 const router = useRouter()
+const route = useRoute()
 const nav = [
   { path: '/dashboard', title: '看板', icon: 'Odometer' },
   { path: '/staging', title: '全部订单', icon: 'Tickets' },
@@ -49,6 +66,18 @@ const nav = [
   { path: '/shipment', title: '集运订单', icon: 'Ship' },
   { path: '/misc', title: '杂项支出', icon: 'Money' },
 ]
+
+// —— 响应式：≤768px 视为手机，侧栏收成抽屉 ——
+const isMobile = ref(false)
+const drawerOpen = ref(false)
+let mq = null
+function syncMobile() {
+  if (!mq) return
+  isMobile.value = mq.matches
+  if (!mq.matches) drawerOpen.value = false   // 回到电脑宽度：强制关抽屉，避免残留态
+}
+function onSelect() { if (isMobile.value) drawerOpen.value = false }   // 手机点菜单即导航即关抽屉
+watch(() => route.path, () => { if (isMobile.value) drawerOpen.value = false })   // 任意方式导航都关
 
 const userName = ref('用户')
 try {
@@ -58,12 +87,16 @@ try {
 
 const fx = reactive({ rate: null, stale: false })
 onMounted(async () => {
+  mq = window.matchMedia('(max-width: 768px)')
+  syncMobile()
+  mq.addEventListener('change', syncMobile)
   try {
     const r = await fxApi.get()
     fx.rate = r.rate
     fx.stale = r.stale
   } catch (_) { /* ignore */ }
 })
+onUnmounted(() => { mq?.removeEventListener('change', syncMobile) })
 
 function logout() {
   localStorage.removeItem('auth_token')
@@ -73,7 +106,7 @@ function logout() {
 </script>
 
 <style scoped>
-.layout { display: flex; height: 100vh; }
+.layout { display: flex; height: 100vh; overflow: hidden; }
 .sidebar {
   width: 220px; flex-shrink: 0; background: #0f1728;
   display: flex; flex-direction: column; border-right: 1px solid #1c2740;
@@ -82,15 +115,48 @@ function logout() {
 .brand-logo {
   width: 40px; height: 40px; border-radius: 8px; background: #1890ff;
   color: #fff; font-size: 22px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
+.brand-text { min-width: 0; }
 .brand-title { font-size: 15px; color: #e6edf7; font-weight: 600; }
 .brand-sub { font-size: 12px; color: #7d8aa3; }
-.menu { flex: 1; border-right: none; }
+.brand-close { flex-shrink: 0; margin-left: auto; color: #a6adb4 !important; padding: 4px !important; }
+.menu { flex: 1; border-right: none; overflow-y: auto; }
 .menu :deep(.el-menu-item) { margin: 4px 8px; border-radius: 6px; }
 .menu :deep(.el-menu-item.is-active) { background: #1890ff; }
 .foot { padding: 12px 16px; border-top: 1px solid #1c2740; display: flex; flex-direction: column; gap: 8px; }
 .fx { font-size: 13px; color: #9ba8bf; display: flex; align-items: center; gap: 6px; }
 .user { display: flex; align-items: center; gap: 6px; color: #c7d2e6; font-size: 13px; }
-.content { flex: 1; overflow: auto; padding: 20px; }
+.content { flex: 1; overflow: auto; padding: 20px; min-width: 0; }
+
+/* —— 手机抽屉：从左滑入 —— */
+.sidebar--mobile {
+  position: fixed; left: 0; top: 0; bottom: 0;
+  width: min(220px, 84vw); z-index: 5010;
+  transform: translate3d(-100%, 0, 0);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+.sidebar--mobile.sidebar--open {
+  transform: translate3d(0, 0, 0);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45);
+}
+@media (max-width: 768px) {
+  .content { padding: 12px; padding-top: 52px; }
+}
+</style>
+
+<!-- Teleport 到 body 的浮动按钮/遮罩：不用 scoped，单独挂类名 -->
+<style>
+.sb-fab {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  top: max(12px, env(safe-area-inset-top, 0px));
+  z-index: 5020; width: 44px; height: 44px; border-radius: 10px;
+  background: #121b2e; border: 1px solid #253149; color: #ecf2ff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45); padding: 0;
+}
+.sb-fab:active { opacity: 0.92; }
+.sb-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 5000; }
 </style>

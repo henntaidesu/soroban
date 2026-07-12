@@ -95,14 +95,14 @@ const columns = [
   { key: 'date', label: '日期', type: 'date', width: 130 },
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 120, placeholder: '订单号' },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
-  { key: 'express_no', label: '快递号', type: 'text', width: 110 },
+  { key: 'express_no', label: '快递号', type: 'text', width: 110, placeholder: '快递号' },
   { key: 'shop', label: '店铺', type: 'text', minWidth: 80 },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: 90, clearable: false },
-  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110 },
-  { key: 'fx_rate', label: '汇率', type: 'decimal', width: 75 },
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
+  { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天汇率' },
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
   { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 110 },
-  { key: 'shipment_order_id', label: '集运(点选)', readonly: true, width: 176 },
+  { key: 'shipment_order_id', label: '集运订单', readonly: true, width: 176, placeholder: '选择' },
   { key: 'items', label: '物品', readonly: true, minWidth: 110, expand: true },
 ]
 

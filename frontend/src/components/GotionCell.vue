@@ -2,7 +2,7 @@
   <!-- 只读展示（派生金额等） -->
   <div v-if="col.readonly" class="gtn-disp">
     <span v-if="disp !== null" :class="col.format ? 'derived' : ''">{{ disp }}</span>
-    <span v-else class="ph">{{ col.placeholder || '—' }}</span>
+    <span v-else class="ph">{{ emptyText }}</span>
   </div>
 
   <!-- select：tag + 弹出选项 -->
@@ -11,7 +11,7 @@
     <template #reference>
       <div class="gtn-disp sel" @click="editing = !editing">
         <el-tag v-if="modelValue" v-bind="tagAttrs(modelValue)" size="small">{{ modelValue }}</el-tag>
-        <span v-else class="ph">{{ col.placeholder || '选择' }}</span>
+        <span v-else class="ph">{{ emptyText }}</span>
       </div>
     </template>
     <div class="gtn-opts">
@@ -29,7 +29,7 @@
                     size="small" class="gtn-in" @change="commit" @visible-change="(v) => !v && close()" />
     <template v-else>
       <span v-if="disp !== null">{{ disp }}</span>
-      <span v-else class="ph">{{ col.placeholder || '—' }}</span>
+      <span v-else class="ph">{{ emptyText }}</span>
     </template>
   </div>
 
@@ -41,7 +41,7 @@
               @blur="commit" @keydown.enter="commit" @keydown.esc="close" />
     <template v-else>
       <span v-if="disp !== null" :class="col.format ? 'derived' : ''">{{ disp }}</span>
-      <span v-else class="ph">{{ col.placeholder || '—' }}</span>
+      <span v-else class="ph">{{ emptyText }}</span>
     </template>
   </div>
 </template>
@@ -56,6 +56,7 @@ import { statusStyle, tagStyleAt } from '@/constants'
 const props = defineProps({
   modelValue: { default: null },
   col: { type: Object, required: true },
+  newRow: { type: Boolean, default: false },   // 幽灵新建行：空值显占位提示引导填写
 })
 const emit = defineEmits(['change'])
 
@@ -77,6 +78,11 @@ const disp = computed(() => {
   if (props.col.format === 'cny') return fmtCNY(v)
   return v
 })
+
+// 只有幽灵新建行才显占位提示（引导填写）；普通数据行空值一律「—」（select 新建行默认「选择」）
+const emptyText = computed(() =>
+  props.newRow ? (props.col.placeholder || (props.col.type === 'select' ? '选择' : '—')) : '—',
+)
 
 function start() {
   if (props.col.readonly) return

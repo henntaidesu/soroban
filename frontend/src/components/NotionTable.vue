@@ -62,8 +62,10 @@
             <td v-if="hasActions"></td>
             <td v-if="expandable"></td>
             <td v-for="col in cols" :key="'n-' + col.key" class="gtn-td">
-              <GotionCell v-if="!col.readonly && !$slots['cell-' + col.key]"
+              <GotionCell v-if="!col.readonly && !$slots['cell-' + col.key]" new-row
                           :model-value="newRow[col.key]" :col="cellCol(col)" @change="(v) => onNew(col, v)" />
+              <!-- 只读/自定义列在新建行显其占位提示（如「集运订单」显「选择」）；无占位则留空 -->
+              <div v-else-if="col.placeholder" class="gtn-new-ph">{{ col.placeholder }}</div>
             </td>
           </tr>
 
@@ -317,6 +319,7 @@ function stopResize() {
 .gtn-new td { background: #10192c; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
 .gtn-new-num { color: #5c6b85; cursor: pointer; }
 .gtn-new-num:hover { color: #67c23a; background: rgba(103, 194, 58, 0.1); }
+.gtn-new-ph { height: 36px; padding: 0 8px; display: flex; align-items: center; color: #5b6880; font-size: 13px; }
 
 .gtn-tagcfg { margin-left: 4px; color: #6b7a93; cursor: pointer; font-size: 13px; }
 .gtn-tagcfg:hover { color: #67c23a; }

@@ -20,7 +20,11 @@
           <div class="expand">
             <div class="ex-title">关联淘宝订单（在此点选增删；淘宝页「集运(点选)」列也能改）</div>
             <el-table v-if="row.taobao_orders && row.taobao_orders.length" :data="row.taobao_orders" size="small">
-              <el-table-column prop="order_no" label="订单号" min-width="130" />
+              <el-table-column label="订单号" min-width="130">
+                <template #default="{ row: t }">
+                  <el-link type="primary" :underline="false" @click="gotoOrder(t)">{{ t.order_no || ('#' + t.id) }}</el-link>
+                </template>
+              </el-table-column>
               <el-table-column label="物品" min-width="180">
                 <template #default="{ row: t }">
                   <span :class="t.items && t.items.length ? '' : 'ph'">{{ itemSummary(t) }}</span>
@@ -61,11 +65,16 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { shipmentApi, taobaoApi } from '@/api'
 import { SHIPMENT_STATUS } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
+
+const router = useRouter()
+// 点关联订单的订单号 → 跳到淘宝页、隔离显示该单并自动展开（用 id，兼容无订单号的单）
+function gotoOrder(t) { router.push({ path: '/taobao', query: { focus: t.id } }) }
 
 // 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
 const today = () => {

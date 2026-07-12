@@ -6,7 +6,7 @@
   </div>
 
   <!-- select：tag + 弹出选项 -->
-  <el-popover v-else-if="col.type === 'select'" :visible="editing" :width="180"
+  <el-popover v-else-if="col.type === 'select'" :visible="editing" :width="180" :offset="4"
               placement="bottom-start" @update:visible="(v) => !v && (editing = false)">
     <template #reference>
       <div class="gtn-disp sel" @click="editing = !editing">

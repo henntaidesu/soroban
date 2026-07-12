@@ -30,6 +30,7 @@ def _check_shipment(session: Session, shipment_id):
 @router.get("")
 def list_orders(
     session: Session = Depends(get_session),
+    id: Optional[int] = Query(None, description="定位单条：供集运页点订单号跳转过来隔离显示"),
     date_from: Optional[dt.date] = None,
     date_to: Optional[dt.date] = None,
     status: Optional[str] = None,
@@ -42,6 +43,8 @@ def list_orders(
     offset: int = Query(0, ge=0),
 ):
     conds = [TaobaoOrder.deleted_at.is_(None)]
+    if id is not None:
+        conds.append(TaobaoOrder.id == id)
     if unassigned:
         conds.append(TaobaoOrder.shipment_order_id.is_(None))
     if date_from:

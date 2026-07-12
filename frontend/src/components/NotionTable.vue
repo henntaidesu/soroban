@@ -110,6 +110,7 @@ const props = defineProps({
   addable: { type: Boolean, default: true },
   actionsWidth: { type: [Number, String], default: 72 },
   tableName: { type: String, default: '' },   // 有则启用列拖拽/拖宽 + 后端持久化
+  openId: { type: [Number, String], default: null },   // 设置后自动展开该 id 的行（供跨页跳转定位）
 })
 const emit = defineEmits(['save', 'add', 'delete'])
 const slots = useSlots()
@@ -205,6 +206,12 @@ async function removeTag(field, value) {
 }
 
 function toggle(id) { open.has(id) ? open.delete(id) : open.add(id) }
+// 跨页跳转定位：openId 一变就标记展开；行数据到达后（v-if open.has）即渲染为展开态，天然处理时序。
+// 换/清定位时收回上一个「自动展开」（只收自己加的那个，不动用户手动展开的行），避免越积越多。
+watch(() => props.openId, (id, prev) => {
+  if (prev !== null && prev !== undefined) open.delete(prev)
+  if (id !== null && id !== undefined) open.add(id)
+}, { immediate: true })
 
 function onNew(col, value) {
   newRow[col.key] = value

@@ -1,9 +1,12 @@
 <template>
   <div>
     <el-card>
-      <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
+      <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable :open-id="focusId"
                    table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
+          <el-tag v-if="focusId" type="warning" closable disable-transitions class="focus-chip" @close="clearFocus">
+            定位订单 #{{ focusId }} · 点 × 看全部
+          </el-tag>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
           <el-select v-model="filters.status" placeholder="状态" clearable style="width: 110px" @change="reload">
@@ -62,6 +65,10 @@
 
       </NotionTable>
 
+      <div v-if="focusId && !loading && !total" class="focus-empty">
+        未找到该订单（可能已删除）。<el-link type="primary" @click="clearFocus">显示全部</el-link>
+      </div>
+
       <el-pagination class="pager" layout="prev, pager, next, total" :total="total"
                      :page-size="pageSize" :current-page="page" @current-change="onPage" />
     </el-card>
@@ -69,7 +76,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Delete, Plus } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
@@ -103,6 +111,7 @@ const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
+const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
 const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
 
@@ -134,6 +143,7 @@ async function load() {
     if (filters.taobao_account) params.taobao_account = filters.taobao_account
     if (filters.express_no) params.express_no = filters.express_no
     if (filters.q) params.q = filters.q
+    if (focusId.value) params.id = focusId.value          // 跳转定位：隔离显示该单
     const res = await taobaoApi.list(params)
     rows.value = res.items
     total.value = res.total
@@ -193,11 +203,24 @@ async function delRow(row) {
   } catch (_) { /* 拦截器已提示 */ }
 }
 
-onMounted(() => { loadShipment(); load() })
+// 集运页点订单号跳转过来：?focus=<id> → 隔离显示该单并自动展开；重复跳转（改 query）也响应。
+// immediate 负责首次加载，故 onMounted 不再重复调 load。
+const route = useRoute()
+const router = useRouter()
+watch(() => route.query.focus, (v) => {
+  focusId.value = (v !== undefined && v !== null && v !== '') ? Number(v) : null
+  page.value = 1
+  load()
+}, { immediate: true })
+function clearFocus() { router.replace({ path: '/taobao', query: {} }) }
+
+onMounted(() => { loadShipment() })
 </script>
 
 <style scoped>
 .pager { margin-top: 12px; justify-content: flex-end; }
+.focus-chip { font-weight: 500; }
+.focus-empty { color: #9ba8bf; font-size: 13px; padding: 16px; text-align: center; }
 .ph { color: #5b6880; }
 .expand { padding: 12px 20px; }
 .ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }

@@ -30,7 +30,7 @@
                   <div class="gtn-tagmgr" @mousedown.stop @click.stop>
                     <div class="gtn-tagmgr-title">{{ col.label }} · 标签（列头管理）</div>
                     <div class="gtn-tag-list">
-                      <el-tag v-for="v in (tagOptions[col.field] || [])" :key="v" size="small" :style="tagStyle(v)"
+                      <el-tag v-for="(v, i) in (tagOptions[col.field] || [])" :key="v" size="small" :style="tagStyleAt(i, v)"
                               closable @close="removeTag(col.field, v)">{{ v }}</el-tag>
                       <span v-if="!(tagOptions[col.field] || []).length" class="gtn-tag-empty">暂无标签</span>
                     </div>
@@ -93,7 +93,7 @@ import { computed, onMounted, reactive, ref, useSlots, watch } from 'vue'
 import { ArrowRight, Check, Delete, Plus, Setting } from '@element-plus/icons-vue'
 import GotionCell from './GotionCell.vue'
 import { layoutApi, tagsApi } from '@/api'
-import { tagStyle } from '@/constants'
+import { tagStyleAt } from '@/constants'
 
 const props = defineProps({
   columns: { type: Array, required: true },

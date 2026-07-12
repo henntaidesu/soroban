@@ -6,7 +6,7 @@
   </div>
 
   <!-- select：tag + 弹出选项 -->
-  <el-popover v-else-if="col.type === 'select'" :visible="editing" :width="176" popper-class="gtn-pop"
+  <el-popover v-else-if="col.type === 'select'" :visible="editing" :width="180"
               placement="bottom-start" @update:visible="(v) => !v && (editing = false)">
     <template #reference>
       <div class="gtn-disp sel" @click="editing = !editing">
@@ -19,9 +19,7 @@
         <el-tag v-bind="tagAttrs(o)" size="small">{{ o }}</el-tag>
         <el-icon v-if="modelValue === o" class="gtn-ck"><Check /></el-icon>
       </div>
-      <div v-if="modelValue && col.clearable !== false" class="gtn-opt clear" @click="choose(null)">
-        <el-icon><Close /></el-icon><span>清除</span>
-      </div>
+      <div v-if="modelValue && col.clearable !== false" class="gtn-opt clear" @click="choose(null)">清除</div>
     </div>
   </el-popover>
 
@@ -51,9 +49,9 @@
 <script setup>
 import { computed, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, Close } from '@element-plus/icons-vue'
+import { Check } from '@element-plus/icons-vue'
 import { fmtCNY, fmtJPY } from '@/utils/money'
-import { statusStyle, tagStyle } from '@/constants'
+import { statusStyle, tagStyleAt } from '@/constants'
 
 const props = defineProps({
   modelValue: { default: null },
@@ -66,7 +64,9 @@ const editVal = ref(null)
 const inp = ref(null)
 // 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
 function tagAttrs(v) {
-  return { style: props.col.tagColored ? tagStyle(v) : statusStyle(v) }
+  if (!props.col.tagColored) return { style: statusStyle(v) }
+  // 标签列按值在可选集里的序号取色（前 10 个不撞色），值不在集里则回退哈希
+  return { style: tagStyleAt((props.col.options || []).indexOf(v), v) }
 }
 
 const disp = computed(() => {
@@ -115,12 +115,13 @@ function choose(o) {
 .ph { color: #5b6880; }
 .derived { color: #8fb8ff; }
 
-.gtn-opts { display: flex; flex-direction: column; gap: 2px; }
-.gtn-opt { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
-.gtn-opt:hover { background: rgba(255, 255, 255, 0.06); }
+.gtn-opts { display: flex; flex-direction: column; gap: 4px; }
+.gtn-opt { display: flex; align-items: center; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.gtn-opt:hover { background: #1b2942; }
+.gtn-opt.active { background: rgba(24, 144, 255, 0.15); }
 .gtn-ck { margin-left: auto; color: #67c23a; font-size: 14px; }
-.gtn-opt.clear { color: #9ba8bf; font-size: 12px; margin-top: 4px; padding-top: 8px; border-top: 1px solid #28354a; border-radius: 0 0 4px 4px; }
-.gtn-opt.clear:hover { color: #f56c6c; background: rgba(245, 108, 108, 0.08); }
+.gtn-opt.clear { color: #9ba8bf; font-size: 12px; border-top: 1px solid #28354a; }
+.gtn-opt.clear:hover { color: #f56c6c; }
 
 /* 无边框内嵌输入，像直接在格子里打字（对冲全局 .el-input{width:180px}） */
 .gtn-in { width: 100% !important; }

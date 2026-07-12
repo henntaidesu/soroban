@@ -33,21 +33,12 @@ html, body, #app {
 .el-card, .el-dialog, .el-table, .el-input__wrapper,
 .el-select__wrapper, .el-textarea__inner { border-color: #2a3446 !important; }
 
-/* 单元格下拉（GotionCell 的 select 弹层）——更紧凑、更像原生菜单 */
-.gtn-pop.el-popper {
-  padding: 6px !important;
-  border: 1px solid #2a3650 !important;
-  background: #16203a !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45) !important;
-}
-.gtn-pop.el-popper .el-popper__arrow::before {
-  background: #16203a !important;
-  border-color: #2a3650 !important;
-}
-
 /* 工具栏日期区间筛选：收窄，别霸占整条工具栏（弹性容器里默认会被拉伸） */
 .flt-date.el-date-editor.el-date-editor--daterange { width: 244px !important; flex: 0 0 244px !important; }
 .flt-date .el-range-separator { padding: 0 2px; flex: none; }
+
+/* 集运点选下拉：选项含状态标签的两行内容，改为自适应高度（默认 34px 会夹住） */
+.ship-pop .el-select-dropdown__item { height: auto; line-height: 1.3; padding: 6px 12px; }
 
 .el-card { background: #131c2f !important; color: #e6edf7; }
 .el-card__header { background: #161f33 !important; border-bottom: 1px solid #28354a !important; color: #e6edf7 !important; }

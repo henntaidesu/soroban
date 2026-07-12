@@ -16,11 +16,15 @@
 
         <template #cell-shipment_order_id="{ row }">
           <el-select :model-value="row.shipment_order_id" clearable filterable placeholder="未集运"
-                     size="small" class="ship-pick" @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
+                     size="small" class="ship-pick" popper-class="ship-pop"
+                     @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
             <el-option v-for="j in shipmentOptions" :key="j.id" :label="j.shipment_no || ('#' + j.id)" :value="j.id">
               <div class="ship-opt">
-                <b>{{ j.shipment_no || ('#' + j.id) }}</b>
-                <span class="ship-meta">{{ j.date }} · {{ j.status }} · 运费{{ fmtJPY(j.jpy_settled) }}</span>
+                <div class="ship-opt-top">
+                  <b>{{ j.shipment_no || ('#' + j.id) }}</b>
+                  <el-tag size="small" :style="statusStyle(j.status)">{{ j.status }}</el-tag>
+                </div>
+                <span class="ship-meta">{{ j.date }} · 运费 {{ j.jpy_settled != null ? fmtJPY(j.jpy_settled) : '待定' }}</span>
               </div>
             </el-option>
           </el-select>
@@ -58,7 +62,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
-import { TAOBAO_STATUS } from '@/constants'
+import { TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -182,6 +186,7 @@ onMounted(() => { loadShipment(); load() })
 .ship-pick { width: 100%; }
 .ship-pick :deep(.el-select__wrapper),
 .ship-pick :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }
-.ship-opt { display: flex; flex-direction: column; line-height: 1.25; }
+.ship-opt { display: flex; flex-direction: column; gap: 3px; line-height: 1.3; }
+.ship-opt-top { display: flex; align-items: center; gap: 8px; }
 .ship-meta { color: #7d8aa3; font-size: 11px; }
 </style>

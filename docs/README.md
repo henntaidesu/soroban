@@ -320,3 +320,24 @@
 - **日期区间筛选收窄**：`el-date-picker daterange` 在 flex 工具栏里默认被拉伸到 ~680px，霸占整条工具栏。加 `.flt-date` 全局类锁死 `width:244px; flex:0 0 244px`（弹性容器里光设 width 会被 flex-grow 撑开，故须一并锁 flex），并收紧区间分隔符内边距。三张有日期筛选的页（淘宝/集运/杂项）统一。
 - **去掉每页大标题**：五页 `<h2 class="page-title">` 全删（含 App.vue 里 `.page-title` 规则）；全部订单页保留那行说明 hint，只是缩小。内容直接从工具栏/卡片起，更省纵向空间。
 - 自测：daterange 实测宽 **244px**；下拉选项改值→落库→刷新仍在 **3/3**；标签渲染回归 **8/8**；四页截图确认无标题空档、无页面报错。纯前端、DB 未动。
+
+### 第二十一版：多智能体对抗审查 + 修复（并发/契约/健壮性）
+6 维度对抗审查（评审→对抗验证）+ 一次专项并发复审（首轮该维度全 6 次重试都 stall，用 sonnet 补跑）。共确认并修 4 处：
+- **前端建单必失败（high，契约漂移）**：`Taobao/index.vue` addRow 写死 `status:'已付'`——状态对齐淘宝后（第十八版）该值已非法，后端 `_check` 校验 → 422，幽灵行建单 100% 失败。改为**不写 status**，让后端 `TaobaoBase` 默认「待发货」生效，根除枚举改名后的前端残留漂移。（4 维度独立命中同一处）
+- **`today()` UTC 偏差（robustness）**：三页 `new Date().toISOString().slice(0,10)` 取的是 UTC 日；用户在日本(JST)，凌晨 0~9 点新建会记成前一天。改用本地时区拼日期（淘宝/集运/杂项三页）。
+- **`ignore_staging` 绕过乐观锁（high，并发）**：原来 `row.version += 1` 是 Python 读-改-写、无 `WHERE version=?` 守卫，与其余所有写端点不一致 → 并发忽略/爬虫写丢失 version 自增。改为 **DB 层原子自增**（`sa_update ... version=version+1`，与 import 门闸同风格）。
+- **`create/update_order` 集运存活校验 TOCTOU（medium，并发）**：`_check_shipment` 是写事务开启前的裸读，并发软删集运单会留下悬空外键。`attach_taobao` 早有 EXISTS 守卫、这两条 PATCH/POST 没有。修法：把校验挪到**写事务内**——update 放到 `guarded_bump` 之后、create 放到 `flush()` 之后（WAL 单写者串行化 + 同事务快照，闭合竞态；被拒时整事务回滚，不留悬空、version 不虚增）。
+- 审查判为「无需改」：`SECRET_KEY` 仅告警不 fail-closed（计划 P9 明确本地开发默认值，fail-closed 会破坏无 .env 的本地流程）；`GotionCell.norm()` 小数以字符串下发（反而更精确，避免 float 化）。
+- 自测：后端 TestClient 集成 **12/12**（含建单默认状态、软删集运单挂靠 422、被拒事务回滚、旧 version→409、ignore 原子自增/404）；建单默认状态 **4/4**；前端 E2E 建单 **7/7** + 忽略 **4/4** + 标签回归 **8/8**。改后重置演示库、重启后端。
+
+**确认复盘（针对首轮 stall 的补审）**：因首轮多为 opus-1M 在高负载下 no-progress stall，用 sonnet 另跑一轮「修复确认 + 全量新扫」。4 处修复独立复核全部 present+correct（ignore 修复还跑了 20 线程并发压测：version 精确到 21、零丢失）。新扫又抓出 2 处首轮被 stall 掩盖的问题，一并修掉：
+- **必填状态可被「清除」→ 误导 409（high，健壮性）**：GotionCell 的 select 弹层对所有列都渲染「清除」，但淘宝/集运的 `status` 是非空列，点清除会发 `status=null` → 撞 NOT NULL → 409「数据完整性冲突」。加 `col.clearable !== false` 门控，并给两处 `status` 列标 `clearable:false`；标签列与可空的 `order_status` 仍可清除（已验证 order_status=null→200）。
+- **`statusTagType` 漏掉 `已取消`（low，可读性）**：集运「已取消」原靠 `|| 'info'` 兜底，补显式 `已取消:'info'`（与「交易关闭」同为终态灰）。
+- 补审自测：清除门控 E2E **4/4**（状态无清除/6 选项在/标签有清除/无报错）+ 标签回归 **8/8** + 建单 **7/7**。
+
+### 第二十二版：标签下拉「随数据自增」（爬虫友好）
+- 原逻辑：下拉可选值只来自 `TagOption` 表（列头手动增删）——爬虫把新账号/收货人写进订单后，值虽在格子里显示，却**不会自动出现在下拉**，得再手动登记一次。
+- 改为 `/api/tags/{field}` 返回 **手动标签 ∪ 数据里实际出现过的值**（`tags.py` 加 `_FIELD_SOURCES`：淘宝账号看 `TaobaoOrder`+`TaobaoStaging`、收货人看 `ShipmentOrder`，`SELECT DISTINCT` + 软删过滤）。这样**爬虫只要把值写进库（走 API 或直写库都行），就自动成为可选项**，无需再碰 TagOption。
+- 顺序：手动标签在前（保留列头顺序、含未被使用的预设），数据派生值去重后按序追加。
+- 取舍：删除某手动标签只是移出预设；若该值仍被数据使用，会因「数据里出现过」继续可选（在用的值本就该能再选，不能凭空消失）。
+- 自测：后端 TestClient **9/9**（爬虫写订单/暂存的新账号自动出现、集运收货人自动出现、手动预设保留且在前、值为纯字符串、软删该行后派生值消失）；前端 E2E **3/3**（模拟爬虫直接 API 建单 → 新账号即时出现在下拉 → 清理还原）。改后重启后端、演示库保持 9/3/4 干净。

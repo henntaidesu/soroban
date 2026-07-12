@@ -74,7 +74,6 @@ def list_orders(
 def create_order(payload: TaobaoCreate, session: Session = Depends(get_session)):
     from ..services.fx import current_rate  # 局部导入避免循环
 
-    _check_shipment(session, payload.shipment_order_id)
     data = payload.model_dump(exclude={"items"})
     order = TaobaoOrder(**data)
     if order.fx_rate is None:                 # 新建时写入当天汇率
@@ -82,6 +81,9 @@ def create_order(payload: TaobaoCreate, session: Session = Depends(get_session))
     order.compute_money()
     order.items = [OrderItem(name=it.name, quantity=it.quantity) for it in payload.items]
     session.add(order)
+    session.flush()                           # 写入并占写锁；FK 保证集运单硬存在
+    # 同事务内复核集运单未软删（此为本事务首次读取该单、非身份映射缓存），闭合并发软删 TOCTOU
+    _check_shipment(session, order.shipment_order_id)
     session.commit()
     session.refresh(order)
     return order
@@ -100,10 +102,12 @@ def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depend
     order = session.get(TaobaoOrder, order_id)
     if not order or order.deleted_at is not None:
         not_found("淘宝订单")
-    if "shipment_order_id" in payload.model_fields_set:
-        _check_shipment(session, payload.shipment_order_id)
     if not guarded_bump(session, TaobaoOrder, order_id, payload.version):
         conflict()
+    # 集运单存活校验放在 guarded_bump 之后：此时写事务已开启并持写锁，校验与写入同一事务，
+    # 闭合「校验通过 → 集运单被并发软删 → 仍挂上」的 TOCTOU（与 attach_taobao 的 EXISTS 守卫同效）。
+    if "shipment_order_id" in payload.model_fields_set:
+        _check_shipment(session, payload.shipment_order_id)
 
     data = payload.model_dump(exclude_unset=True, exclude={"version", "items"})
     for key, value in data.items():

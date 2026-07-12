@@ -169,15 +169,18 @@ def delete_staging(row_id: int, session: Session = Depends(get_session)):
 
 @router.post("/{row_id}/ignore", response_model=StagingRead)
 def ignore_staging(row_id: int, session: Session = Depends(get_session)):
-    row = session.get(TaobaoStaging, row_id)
-    if not row:
+    # 原子标记忽略：version 在 DB 层自增（而非 Python 读-改-写），避免并发忽略/爬虫写
+    # 丢失 version 自增、绕过乐观锁；与 import_staging 的原子门闸同风格。
+    res = session.execute(
+        sa_update(TaobaoStaging)
+        .where(TaobaoStaging.id == row_id)
+        .values(status=StagingStatus.ignored.value,
+                version=TaobaoStaging.version + 1, updated_at=utcnow())
+    )
+    if res.rowcount != 1:
         not_found("暂存记录")
-    row.status = StagingStatus.ignored.value
-    row.version += 1
-    row.updated_at = utcnow()
-    session.add(row)
     session.commit()
-    session.refresh(row)
+    row = session.get(TaobaoStaging, row_id)
     return _read(session, row)
 
 

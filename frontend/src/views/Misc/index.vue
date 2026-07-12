@@ -22,7 +22,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { miscApi } from '@/api'
 import NotionTable from '@/components/NotionTable.vue'
 
-const today = () => new Date().toISOString().slice(0, 10)
+// 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const columns = [
   { key: 'date', label: '日期', type: 'date', width: 140 },

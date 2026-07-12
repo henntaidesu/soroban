@@ -19,7 +19,7 @@
         <el-tag v-bind="tagAttrs(o)" size="small">{{ o }}</el-tag>
         <el-icon v-if="modelValue === o" class="gtn-ck"><Check /></el-icon>
       </div>
-      <div v-if="modelValue" class="gtn-opt clear" @click="choose(null)">
+      <div v-if="modelValue && col.clearable !== false" class="gtn-opt clear" @click="choose(null)">
         <el-icon><Close /></el-icon><span>清除</span>
       </div>
     </div>

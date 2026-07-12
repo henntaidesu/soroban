@@ -67,7 +67,11 @@ import { SHIPMENT_STATUS } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
-const today = () => new Date().toISOString().slice(0, 10)
+// 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const columns = [
   { key: 'date', label: '日期', type: 'date', width: 130 },
@@ -75,7 +79,7 @@ const columns = [
   { key: 'intl_tracking_no', label: '国际运单号', type: 'text', minWidth: 120 },
   { key: 'recipient', label: '收货人', type: 'tag', field: 'recipient', width: 100 },
   { key: 'weight', label: '重量kg', type: 'decimal', width: 80 },
-  { key: 'status', label: '状态', type: 'select', options: SHIPMENT_STATUS, width: 100 },
+  { key: 'status', label: '状态', type: 'select', options: SHIPMENT_STATUS, width: 100, clearable: false },
   { key: 'price_cny', label: '运费(元)', type: 'decimal', format: 'cny', width: 95 },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 75 },
   { key: 'special_fee_jpy', label: '特殊费¥', type: 'int', width: 95, placeholder: '关税/消费税' },

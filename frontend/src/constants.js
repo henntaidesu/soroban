@@ -7,7 +7,7 @@ export const STAGING_STATUS = ['待处理', '已导入', '已忽略']   // 暂�
 export function statusTagType(s) {
   return {
     待付款: 'info', 待发货: 'warning', 待收货: 'primary', 交易成功: 'success', 退款: 'danger', 交易关闭: 'info',
-    打包中: 'warning', 已发出: 'primary', 已签收: 'success',
+    打包中: 'warning', 已发出: 'primary', 已签收: 'success', 已取消: 'info',
   }[s] || 'info'
 }
 

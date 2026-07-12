@@ -30,9 +30,15 @@
                   <div class="gtn-tagmgr" @mousedown.stop @click.stop>
                     <div class="gtn-tagmgr-title">{{ col.label }} · 标签（列头管理）</div>
                     <div class="gtn-tag-list">
-                      <el-tag v-for="(v, i) in (tagOptions[col.field] || [])" :key="v" size="small" :style="tagStyleAt(i, v)"
-                              closable @close="removeTag(col.field, v)">{{ v }}</el-tag>
+                      <el-tag v-for="v in (tagOptions[col.field] || [])" :key="v" size="small"
+                              :style="tagStyleAt(tagMeta[col.field]?.[v]?.color ?? -1, v)"
+                              :closable="!(tagMeta[col.field]?.[v]?.in_use)"
+                              :title="tagMeta[col.field]?.[v]?.in_use ? '使用中，不可删除' : ''"
+                              @close="removeTag(col.field, v)">{{ v }}</el-tag>
                       <span v-if="!(tagOptions[col.field] || []).length" class="gtn-tag-empty">暂无标签</span>
+                    </div>
+                    <div v-if="Object.values(tagMeta[col.field] || {}).some((t) => t.in_use)" class="gtn-tag-hint">
+                      使用中的标签不可删除
                     </div>
                     <div class="gtn-tag-add">
                       <el-input v-model="newTag[col.field]" size="small" placeholder="新标签名" @keyup.enter="addTag(col.field)" />
@@ -90,6 +96,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, useSlots, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { ArrowRight, Check, Delete, Plus, Setting } from '@element-plus/icons-vue'
 import GotionCell from './GotionCell.vue'
 import { layoutApi, tagsApi } from '@/api'
@@ -117,7 +124,8 @@ const newRow = reactive({})
 const cols = ref([])
 let savedLayout = []
 let dirtyDuringLoad = false   // 用户在初始拉取期间改过布局？改过就别用 GET 结果覆盖
-const tagOptions = reactive({})   // { field: [值...] } 标签下拉集，列头可增删
+const tagOptions = reactive({})   // { field: [值...] } 标签下拉集（供 select 选项）
+const tagMeta = reactive({})      // { field: { 值: {color, in_use} } } 每标签的颜色序号 + 是否在用
 const newTag = reactive({})       // { field: 输入中的新标签名 }
 
 const hasActions = computed(() => !!slots.actions)
@@ -165,12 +173,18 @@ function saveLayout() {
   layoutApi.save(props.tableName, savedLayout).catch(() => {})
 }
 
-// —— 标签列：渲染成 select，选项来自可管理的标签集 ——
+// —— 标签列：渲染成 select，选项 + 每标签颜色/是否在用 来自可管理的标签集 ——
 function cellCol(col) {
-  return col.type === 'tag' ? { ...col, type: 'select', options: tagOptions[col.field] || [], tagColored: true } : col
+  return col.type === 'tag'
+    ? { ...col, type: 'select', options: tagOptions[col.field] || [], tagMeta: tagMeta[col.field] || {}, tagColored: true }
+    : col
+}
+function applyTags(field, list) {   // list: [{value, color, in_use}]
+  tagOptions[field] = list.map((t) => t.value)
+  tagMeta[field] = Object.fromEntries(list.map((t) => [t.value, t]))
 }
 async function loadTag(field) {   // 单字段拉取；失败保留旧值/置空，供列头弹窗 @show 重试
-  try { tagOptions[field] = await tagsApi.list(field) } catch (_) { if (!tagOptions[field]) tagOptions[field] = [] }
+  try { applyTags(field, await tagsApi.list(field)) } catch (_) { if (!tagOptions[field]) { tagOptions[field] = []; tagMeta[field] = {} } }
 }
 async function loadTags() {
   const fields = [...new Set(props.columns.filter((c) => c.type === 'tag').map((c) => c.field))]
@@ -179,10 +193,15 @@ async function loadTags() {
 async function addTag(field) {
   const v = (newTag[field] || '').trim()
   if (!v) return
-  try { tagOptions[field] = await tagsApi.add(field, v); newTag[field] = '' } catch (_) { /* 拦截器已提示 */ }
+  try { applyTags(field, await tagsApi.add(field, v)); newTag[field] = '' } catch (_) { /* 拦截器已提示 */ }
 }
 async function removeTag(field, value) {
-  try { tagOptions[field] = await tagsApi.remove(field, value) } catch (_) { /* 拦截器已提示 */ }
+  try {
+    applyTags(field, await tagsApi.remove(field, value))
+  } catch (e) {
+    // 409（使用中不可删）被拦截器刻意跳过，这里自行提示；其余错误拦截器已提示
+    if (e.response?.status === 409) ElMessage.warning(e.response?.data?.detail || '该标签使用中，不能删除')
+  }
 }
 
 function toggle(id) { open.has(id) ? open.delete(id) : open.add(id) }
@@ -297,5 +316,6 @@ function stopResize() {
 .gtn-tagmgr-title { color: #9ba8bf; font-size: 12px; margin-bottom: 8px; }
 .gtn-tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .gtn-tag-empty { color: #5b6880; font-size: 12px; }
+.gtn-tag-hint { color: #6b7a93; font-size: 11px; margin-bottom: 8px; }
 .gtn-tag-add { display: flex; gap: 6px; }
 </style>

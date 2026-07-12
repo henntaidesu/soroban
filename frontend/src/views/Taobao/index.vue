@@ -15,14 +15,25 @@
         </template>
 
         <template #cell-shipment_order_id="{ row }">
-          <el-select :model-value="row.shipment_order_id" clearable filterable placeholder="未集运"
+          <el-select :model-value="row.shipment_order_id" filterable placeholder="未集运"
                      size="small" class="ship-pick" popper-class="ship-pop"
-                     @change="(v) => saveCell(row, 'shipment_order_id', v ?? null)">
-            <el-option v-for="j in shipmentOptions" :key="j.id" :label="j.shipment_no || ('#' + j.id)" :value="j.id">
+                     @change="(v) => onPickShipment(row, v)">
+            <template #label="{ value }">
+              <span class="ship-sel">
+                <b>{{ shipNo(value) }}</b>
+                <el-tag v-if="shipById(value)" size="small" :style="statusStyle(shipById(value).status)">{{ shipById(value).status }}</el-tag>
+              </span>
+            </template>
+            <!-- 清除固定在列表最上（集运单可能很多）；无归属时不显示 -->
+            <el-option v-if="row.shipment_order_id" :value="-1" label="清除">
+              <div class="ship-clear">清除（取消集运）</div>
+            </el-option>
+            <el-option v-for="j in sortedShipments" :key="j.id" :label="j.shipment_no || ('#' + j.id)" :value="j.id">
               <div class="ship-opt">
                 <div class="ship-opt-top">
                   <b>{{ j.shipment_no || ('#' + j.id) }}</b>
                   <el-tag size="small" :style="statusStyle(j.status)">{{ j.status }}</el-tag>
+                  <el-icon v-if="j.id === row.shipment_order_id" class="ship-ck"><Check /></el-icon>
                 </div>
                 <span class="ship-meta">{{ j.date }} · 运费 {{ j.jpy_settled != null ? fmtJPY(j.jpy_settled) : '待定' }}</span>
               </div>
@@ -58,9 +69,9 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Plus } from '@element-plus/icons-vue'
+import { Check, Delete, Plus } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
 import { TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
@@ -94,6 +105,16 @@ const page = ref(1)
 const pageSize = 30
 const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
+
+function shipById(id) { return shipmentOptions.value.find((j) => j.id === id) }
+function shipNo(id) { const j = shipById(id); return j ? (j.shipment_no || ('#' + id)) : ('#' + id) }
+// 打包中的集运单永远置顶（最常挂新订单）；其余保持原顺序（日期倒序）。sort 稳定，同组不乱。
+const sortedShipments = computed(() =>
+  [...shipmentOptions.value].sort((a, b) => (b.status === '打包中' ? 1 : 0) - (a.status === '打包中' ? 1 : 0)),
+)
+function onPickShipment(row, v) {   // -1 = 列表里的「清除」项；其余为集运单 id
+  saveCell(row, 'shipment_order_id', v === -1 ? null : (v ?? null))
+}
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
@@ -186,7 +207,14 @@ onMounted(() => { loadShipment(); load() })
 .ship-pick { width: 100%; }
 .ship-pick :deep(.el-select__wrapper),
 .ship-pick :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }
+/* 隐藏下拉箭头/清除叉，避免误触；清除改放到下拉列表里 */
+.ship-pick :deep(.el-select__suffix) { display: none; }
+.ship-clear { color: #9ba8bf; font-size: 12px; }
 .ship-opt { display: flex; flex-direction: column; gap: 3px; line-height: 1.3; }
 .ship-opt-top { display: flex; align-items: center; gap: 8px; }
 .ship-meta { color: #7d8aa3; font-size: 11px; }
+.ship-ck { margin-left: auto; color: #67c23a; font-size: 14px; }
+/* 单元格里显示所选集运单：单号 + 状态标签 */
+.ship-sel { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ship-sel b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

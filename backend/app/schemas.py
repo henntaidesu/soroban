@@ -411,3 +411,9 @@ class LayoutUpdate(SQLModel):
 
 class TagIn(SQLModel):
     value: str
+
+
+class TagOut(SQLModel):
+    value: str
+    color: int                      # 调色盘序号（0..N-1），前端映射到 TAG_PALETTE
+    in_use: bool = False            # 是否被数据（订单/暂存/集运）使用中——使用中不可删除

@@ -211,6 +211,7 @@ class TagOption(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     field: str = Field(index=True)      # 归属字段：taobao_account / recipient
     value: str
+    color: Optional[int] = Field(default=None)   # 调色盘序号（0..N-1），建标签时分配、之后不变（稳定不撞色）
 
 
 # --- 列布局（每个表的列顺序+宽度，存后端，所有人一致）------------------------

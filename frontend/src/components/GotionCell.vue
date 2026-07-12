@@ -65,8 +65,9 @@ const inp = ref(null)
 // 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
 function tagAttrs(v) {
   if (!props.col.tagColored) return { style: statusStyle(v) }
-  // 标签列按值在可选集里的序号取色（前 10 个不撞色），值不在集里则回退哈希
-  return { style: tagStyleAt((props.col.options || []).indexOf(v), v) }
+  // 标签列用后端持久化的颜色序号（稳定不撞色）；缺失则回退按值哈希
+  const meta = props.col.tagMeta && props.col.tagMeta[v]
+  return { style: tagStyleAt(meta ? meta.color : -1, v) }
 }
 
 const disp = computed(() => {

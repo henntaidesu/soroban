@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from . import models  # noqa: F401  确保建表前所有模型已注册
 from .config import settings
 from .database import create_db_and_tables
-from .routers import auth, dashboard, fx, shipment, layout, misc, staging, tags, taobao
+from .routers import auth, dashboard, fx, shipment, layout, misc, scrape, staging, tags, taobao
 from .services.fx import fx_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -49,7 +49,7 @@ app.add_middleware(
 
 for r in (
     auth.router, taobao.router, shipment.router, misc.router,
-    staging.router, dashboard.router, fx.router, layout.router, tags.router,
+    staging.router, dashboard.router, fx.router, layout.router, tags.router, scrape.router,
 ):
     app.include_router(r)
 

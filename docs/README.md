@@ -415,3 +415,10 @@
 - **(low) 死代码**：taobao.py 未用的 `User` import 删除；constants.js 把仅内部使用的 `statusTagType/stagingTag/tagColor/tagStyle`（已被 statusStyle/stagingStyle/tagStyleAt 封装/回退取代）去掉 `export`。
 - **(low) 留一处不改**：标签配色分配是读-改-写，并发加标签罕见撞色——纯观感、单用户几乎不可能触发，且严谨修复需序列化/唯一索引（而颜色 10 后本就重复，唯一索引会错），**加复杂度换零正确性收益，不划算**，故保留并记录。
 - 自测：后端 TestClient **7/7**（编辑已导入行账号→旧账号可删/新账号占用、删集运单→订单 version 自增+旧 version PATCH 409）；前端回归 标签 8/8 / 建单 7/7 / 手机 15/15 / 跳转 11/11 全绿。改后重置演示库、重启后端。
+
+### 第三十三版：淘宝爬虫脚手架（soroban 下但 git 排除）+ soroban 瘦触发端点/按钮
+按用户要求「爬虫放 soroban 下但被 soroban 排除、入口按钮进项目」：
+- **`soroban/scraper/` 下新建**（soroban `.gitignore` 用 `/scraper/*/` 排除各爬虫子目录、只留 `scraper/README.md`；各爬虫各自成库/venv/Playwright、不 import soroban、零污染源项目），先做 `scraper/taobao/`：`config`（读 .env）、`soroban_client`（登录+按 order_no **幂等 upsert** 回灌暂存表，**真实可用**）、`session/fetch/normalize`（Playwright 登录/拦 mtop/字段映射的**诚实 stub**，标了 TODO，待抓包+账号才能填）、`run` CLI（`--demo/--login/--account`）、README/.gitignore。方案详解见 `docs/taobao-爬虫方案.md`。
+- **soroban 瘦集成**（用户选「端点+按钮」）：`config` 加 `SCRAPER_CMD/SCRAPER_CWD`；新 `routers/scrape.py` 的 `POST /api/scrape` 按配置**列表形式启动子进程**（无 shell 注入、fire-and-forget）；全部订单页加「抓取淘宝订单」按钮。默认不配 → 按钮点了提示「未配置爬虫」（正确）。
+- 自测：`--demo` 推演示单 **created 1**；同 order_no 二次推 **created→updated**（幂等不重复）；`POST /api/scrape` 配 demo 命令→`started:true`+暂存冒出 DEMO 行→清理回 4；未配置→**400**+友好提示；按钮 E2E **3/3**；回归建单 7/7。soroban 被跟踪的代码只多了「config+1 路由+1 按钮+api 一行」，抓取逻辑全在被 git 排除的 `scraper/taobao/` 里。
+- **待办（需你账号+抓一次包）**：填 `session.py` 扫码登录判定、`fetch.py` 真实订单 mtop 接口、`normalize.py` 字段路径；填完按钮即通。

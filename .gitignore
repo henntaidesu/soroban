@@ -228,3 +228,6 @@ frontend/dist/
 
 # soroban backups
 backups/
+
+# --- 爬虫（各平台各自成库，soroban 不跟踪其代码，只保留 scraper/README.md 说明）---
+/scraper/*/

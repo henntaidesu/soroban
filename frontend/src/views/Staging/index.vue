@@ -13,6 +13,7 @@
           </el-select>
           <el-input v-model="filters.taobao_account" placeholder="淘宝账号" clearable style="width: 130px" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜订单号/店铺" clearable style="width: 160px" @change="reload" />
+          <el-button :icon="Download" :loading="scraping" @click="triggerScrape">抓取淘宝订单</el-button>
         </template>
 
         <template #cell-items="{ row }">
@@ -57,8 +58,8 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Plus } from '@element-plus/icons-vue'
-import { stagingApi } from '@/api'
+import { Delete, Download, Plus } from '@element-plus/icons-vue'
+import { scrapeApi, stagingApi } from '@/api'
 import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -81,6 +82,7 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 50
 const filters = reactive({ status: '', taobao_account: '', q: '' })
+const scraping = ref(false)
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
@@ -169,6 +171,18 @@ async function doDelete(row) {
     ElMessage.success('已删除')
     load()
   } catch (_) { /* 拦截器已提示 */ }
+}
+
+async function triggerScrape() {
+  scraping.value = true
+  try {
+    await scrapeApi.trigger()
+    ElMessage.success('已触发抓取，跑完（首次可能要扫码）后刷新看新单')
+  } catch (_) {
+    // 400 未配置 / 500 启动失败：拦截器已提示
+  } finally {
+    scraping.value = false
+  }
 }
 
 onMounted(load)

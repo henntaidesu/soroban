@@ -52,6 +52,11 @@ export const layoutApi = {
   save: (table, columns) => http.put(`/layout/${table}`, { columns }),
 }
 
+// 触发外部淘宝爬虫（soroban 只按配置启动它，抓取逻辑在仓库外的 scraper/）
+export const scrapeApi = {
+  trigger: (account) => http.post('/scrape', null, { params: account ? { account } : {} }),
+}
+
 export const tagsApi = {
   list: (field) => http.get(`/tags/${field}`),
   add: (field, value) => http.post(`/tags/${field}`, { value }),

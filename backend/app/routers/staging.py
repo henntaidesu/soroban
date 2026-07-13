@@ -131,6 +131,7 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
         for key, value in data.items():
             if key in _SHARED_TO_ORDER:
                 setattr(order, _SHARED_TO_ORDER[key], value)
+                setattr(row, key, value)   # 暂存行自身原始列也同步，避免 tags._data_values / 列表筛选读到陈旧值
             elif key == "status":
                 row.status = value
         order.compute_money()

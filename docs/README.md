@@ -406,3 +406,12 @@
 - FAB/遮罩 `Teleport to body` + 非 scoped 样式（z-index 5000/5010/5020）；`.content` 手机内边距收到 12px、顶部留 52px 给 FAB；`.layout` 加 `overflow:hidden` 防抽屉滑出造成横向滚动。
 - 表格仍横向滚动（数据密、可接受）；看板卡片 `el-col :xs=12` 手机两列、登录卡自适应。
 - 自测：手机 390×844 + 电脑 1400 双视口 E2E **15/15**（FAB 显隐、抽屉滑入 x=0、遮罩、点菜单导航+自动关、点遮罩关、无横向溢出、电脑侧栏常驻宽 220）；桌面回归 建单 7/7、跳转 11/11。截图确认抽屉观感。纯前端、DB 未动。
+
+### 第三十二版：全项目对抗审查（7 维度）+ 修复
+7 维度审查（并发/金额/安全/前端/契约/死代码/健壮性 → 逐条对抗验证，sonnet 无 stall），**6 确认 0 误报**，修 5 留 1：
+- **(med) 暂存写穿只改账本、暂存行原始列陈旧**（staging.py）：编辑已导入暂存行的 `taobao_account` 只写到 order，`TaobaoStaging.taobao_account` 留旧值；而 `tags._data_values` / 列表筛选**直读暂存原始列**（`_read` 的覆盖只在响应层）→ 旧账号被误判「使用中」不可删、`q`/账号筛选对这类行失准。修：写穿时 `setattr(row, key, value)` 同步暂存行自身列。
+- **(med) 删集运单解绑子订单未 bump version**（shipment.py）：`.values(shipment_order_id=None)` 漏了 `version+1/updated_at`，与本文件 attach/detach、taobao 删单清暂存 back-ref 不一致 → 客户端陈旧态下次 PATCH 不会 409、乐观锁失效。修：补 `version=version+1, updated_at`。
+- **(low) 暂存 saveItems 任何错误都整表刷新**（Staging/index.vue）：非 409 也 `load()`、丢弃其它行未保存编辑。改为**仅 409 刷新**（对齐淘宝页）。
+- **(low) 死代码**：taobao.py 未用的 `User` import 删除；constants.js 把仅内部使用的 `statusTagType/stagingTag/tagColor/tagStyle`（已被 statusStyle/stagingStyle/tagStyleAt 封装/回退取代）去掉 `export`。
+- **(low) 留一处不改**：标签配色分配是读-改-写，并发加标签罕见撞色——纯观感、单用户几乎不可能触发，且严谨修复需序列化/唯一索引（而颜色 10 后本就重复，唯一索引会错），**加复杂度换零正确性收益，不划算**，故保留并记录。
+- 自测：后端 TestClient **7/7**（编辑已导入行账号→旧账号可删/新账号占用、删集运单→订单 version 自增+旧 version PATCH 409）；前端回归 标签 8/8 / 建单 7/7 / 手机 15/15 / 跳转 11/11 全绿。改后重置演示库、重启后端。

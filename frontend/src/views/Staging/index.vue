@@ -129,7 +129,10 @@ async function saveItems(row) {
     const updated = await stagingApi.update(row.id, { version: row.version, items })
     Object.assign(row, updated)
     ElMessage.success('物品已保存')
-  } catch (_) { load() }
+  } catch (e) {
+    // 仅 409（数据已变）才整表刷新；其它错误交拦截器提示，保留本地未保存编辑
+    if (e.response?.status === 409) { ElMessage.warning(e.response?.data?.detail || '数据已变，已刷新'); load() }
+  }
 }
 
 async function addRow(data = {}) {

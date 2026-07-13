@@ -173,7 +173,7 @@ def delete_order(order_id: int, session: Session = Depends(get_session)):
     session.execute(
         sa_update(TaobaoOrder)
         .where(TaobaoOrder.shipment_order_id == order_id, TaobaoOrder.deleted_at.is_(None))
-        .values(shipment_order_id=None)
+        .values(shipment_order_id=None, version=TaobaoOrder.version + 1, updated_at=utcnow())
     )
     soft_delete(order)
     session.add(order)

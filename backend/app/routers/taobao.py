@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import ShipmentOrder, OrderItem, StagingStatus, TaobaoOrder, TaobaoStaging, User, utcnow
+from ..models import ShipmentOrder, OrderItem, StagingStatus, TaobaoOrder, TaobaoStaging, utcnow
 from ..schemas import TaobaoCreate, TaobaoRead, TaobaoUpdate
 from .common import conflict, guarded_bump, not_found, soft_delete
 

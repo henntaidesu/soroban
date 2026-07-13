@@ -413,6 +413,14 @@ class TagIn(SQLModel):
     value: str
 
 
+# --- 爬虫插件配置 -----------------------------------------------------------
+
+class PluginConfigIn(SQLModel):
+    enabled: bool = False
+    params: dict = {}                 # 用户填的参数（如 {"accounts": "acctA,acctB"}）
+    schedule_minutes: int = 0         # 定时抓取间隔（分钟），0=不定时
+
+
 class TagOut(SQLModel):
     value: str
     color: int                      # 调色盘序号（0..N-1），前端映射到 TAG_PALETTE

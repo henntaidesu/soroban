@@ -12,7 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from . import models  # noqa: F401  确保建表前所有模型已注册
 from .config import settings
 from .database import create_db_and_tables
-from .routers import auth, dashboard, fx, shipment, layout, misc, scrape, staging, tags, taobao
+from .routers import auth, dashboard, fx, shipment, layout, misc, plugins, staging, tags, taobao
+from .routers.plugins import scheduler_loop
 from .services.fx import fx_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -29,11 +30,12 @@ async def lifespan(app: FastAPI):
             "上公网前务必在 .env 设置强随机 SECRET_KEY，否则登录 token 可被伪造！"
         )
     create_db_and_tables()          # MVP 阶段用 create_all；真数据前切 Alembic
-    task = asyncio.create_task(fx_loop())
+    tasks = [asyncio.create_task(fx_loop()), asyncio.create_task(scheduler_loop())]
     try:
         yield
     finally:
-        task.cancel()
+        for t in tasks:
+            t.cancel()
 
 
 app = FastAPI(title="soroban", version="0.1.0", lifespan=lifespan)
@@ -49,7 +51,7 @@ app.add_middleware(
 
 for r in (
     auth.router, taobao.router, shipment.router, misc.router,
-    staging.router, dashboard.router, fx.router, layout.router, tags.router, scrape.router,
+    staging.router, dashboard.router, fx.router, layout.router, tags.router, plugins.router,
 ):
     app.include_router(r)
 

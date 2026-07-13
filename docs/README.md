@@ -418,7 +418,15 @@
 
 ### 第三十三版：淘宝爬虫脚手架（soroban 下但 git 排除）+ soroban 瘦触发端点/按钮
 按用户要求「爬虫放 soroban 下但被 soroban 排除、入口按钮进项目」：
-- **`soroban/scraper/` 下新建**（soroban `.gitignore` 用 `/scraper/*/` 排除各爬虫子目录、只留 `scraper/README.md`；各爬虫各自成库/venv/Playwright、不 import soroban、零污染源项目），先做 `scraper/taobao/`：`config`（读 .env）、`soroban_client`（登录+按 order_no **幂等 upsert** 回灌暂存表，**真实可用**）、`session/fetch/normalize`（Playwright 登录/拦 mtop/字段映射的**诚实 stub**，标了 TODO，待抓包+账号才能填）、`run` CLI（`--demo/--login/--account`）、README/.gitignore。方案详解见 `docs/taobao-爬虫方案.md`。
+- **`soroban/scraper/` 下新建**（soroban `.gitignore` 用 `/scraper/*/` 排除各爬虫子目录、只留 `scraper/README.md`；各爬虫各自成库/venv/Playwright、不 import soroban、零污染源项目），先做 `scraper/soroban-scraper-taobao/`（各自成库、已连远程 Gosoki/soroban-scraper-taobao）：`config`（读 .env）、`soroban_client`（登录+按 order_no **幂等 upsert** 回灌暂存表，**真实可用**）、`session/fetch/normalize`（Playwright 登录/拦 mtop/字段映射的**诚实 stub**，标了 TODO，待抓包+账号才能填）、`run` CLI（`--demo/--login/--account`）、README/.gitignore。方案详解见 `docs/taobao-爬虫方案.md`。
 - **soroban 瘦集成**（用户选「端点+按钮」）：`config` 加 `SCRAPER_CMD/SCRAPER_CWD`；新 `routers/scrape.py` 的 `POST /api/scrape` 按配置**列表形式启动子进程**（无 shell 注入、fire-and-forget）；全部订单页加「抓取淘宝订单」按钮。默认不配 → 按钮点了提示「未配置爬虫」（正确）。
-- 自测：`--demo` 推演示单 **created 1**；同 order_no 二次推 **created→updated**（幂等不重复）；`POST /api/scrape` 配 demo 命令→`started:true`+暂存冒出 DEMO 行→清理回 4；未配置→**400**+友好提示；按钮 E2E **3/3**；回归建单 7/7。soroban 被跟踪的代码只多了「config+1 路由+1 按钮+api 一行」，抓取逻辑全在被 git 排除的 `scraper/taobao/` 里。
+- 自测：`--demo` 推演示单 **created 1**；同 order_no 二次推 **created→updated**（幂等不重复）；`POST /api/scrape` 配 demo 命令→`started:true`+暂存冒出 DEMO 行→清理回 4；未配置→**400**+友好提示；按钮 E2E **3/3**；回归建单 7/7。soroban 被跟踪的代码只多了「config+1 路由+1 按钮+api 一行」，抓取逻辑全在被 git 排除的 `scraper/soroban-scraper-taobao/` 里。
 - **待办（需你账号+抓一次包）**：填 `session.py` 扫码登录判定、`fetch.py` 真实订单 mtop 接口、`normalize.py` 字段路径；填完按钮即通。
+
+### 第三十四版：爬虫改插件架构（自动发现 + 插件管理页 + 定时/授权归 soroban）
+把第三十三版的「单按钮触发」升级为**插件体系**（用户要「插件形式、soroban 自动加载、前端一页管理、授权/定时在 soroban、为将来 JD 铺路」；选型「子进程调标准 CLI」+「插件自存会话、配置存 soroban」）：
+- **插件契约**：每个爬虫加 `plugin.toml` 清单（`id`/`name`/`version`/`python`/`entry`/`state_dir`/`params`）+ 标准 CLI（`login`/`fetch`/`status`/`demo`，**stdout 只输出一行 JSON**、日志走 stderr+文件保持 stdout 干净）。`soroban_client` 加 `token=` 支持——soroban 触发时下发**短期 JWT**（`create_access_token`），插件**免存 soroban 密码**；`.env` 账密仅脱离 soroban 手动跑时用。
+- **soroban 后端**：新 `PluginConfig` 表（`plugin_id` 主键 / `enabled` / `params_json` / `schedule_minutes` / `last_run_at`）；新 `routers/plugins.py`：`discover()` 扫 `scraper/soroban-scraper-*` 读 `plugin.toml`（`tomllib`），`GET /api/plugins`（列插件+安装状态+每账号授权状态）、`PUT /{id}/config`、`POST /{id}/login`、`POST /{id}/fetch`（按账号下发 token 子进程触发）；`scheduler_loop` 每 60s 按各启用插件的 `schedule_minutes` 到点自动 fetch，放进 lifespan。**删掉**第三十三版的 `routers/scrape.py` 与 `SCRAPER_CMD/CWD`、全部订单页的「抓取」按钮（`config` 改留 `SCRAPER_DIR` 可选覆盖，默认 `soroban/scraper`）。
+- **soroban 前端**：新「插件管理」页（侧栏+路由）：每插件卡片示安装状态、启用/定时开关、参数表单（按 manifest 渲染）、每账号授权状态 + 「授权登录/重新授权」「抓这个号」、「抓取全部账号」；`api` 换 `scrapeApi`→`pluginsApi`。
+- **修占位 bug**：`session.py` 登录成功判定原用 glob `**taobao.com/**`——会匹配 `login.taobao.com` 本身而秒过（假成功、存下未登录的空会话）。改为谓词「跳离 login 子域才算成功」。
+- 自测：`GET /api/plugins` 发现 taobao（installed=true）；`PUT config` 存账号/定时；`POST fetch` fire-and-forget 起子进程（`scrape.log` 见对应账号 fetch 记录）；`login` 端点起进程；未知插件→404、无 token→401；回归既有 8 接口全 200、前端 `vite build` 通过。新增平台爬虫 = 建目录+`plugin.toml`+实现同款 CLI，soroban 自动认到。

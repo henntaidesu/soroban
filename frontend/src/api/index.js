@@ -52,9 +52,12 @@ export const layoutApi = {
   save: (table, columns) => http.put(`/layout/${table}`, { columns }),
 }
 
-// 触发外部淘宝爬虫（soroban 只按配置启动它，抓取逻辑在仓库外的 scraper/）
-export const scrapeApi = {
-  trigger: (account) => http.post('/scrape', null, { params: account ? { account } : {} }),
+// 爬虫插件（soroban 扫 scraper/soroban-scraper-* 作为插件；管理层在插件管理页）
+export const pluginsApi = {
+  list: () => http.get('/plugins'),
+  saveConfig: (id, cfg) => http.put(`/plugins/${id}/config`, cfg),
+  login: (id, account) => http.post(`/plugins/${id}/login`, null, { params: { account } }),
+  fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
 }
 
 export const tagsApi = {

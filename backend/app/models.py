@@ -214,6 +214,17 @@ class TagOption(SQLModel, table=True):
     color: Optional[int] = Field(default=None)   # 调色盘序号（0..N-1），建标签时分配、之后不变（稳定不撞色）
 
 
+# --- 爬虫插件配置（soroban 做管理层：存每个插件的启用/参数/定时；插件本体在 scraper/ 下）---
+
+class PluginConfig(SQLModel, table=True):
+    plugin_id: str = Field(primary_key=True)                # 对应 plugin.toml 的 id
+    enabled: bool = Field(default=False)                    # 是否启用（定时抓取才生效）
+    params_json: str = Field(default="{}")                  # 用户在插件管理页填的参数（如 accounts）
+    schedule_minutes: int = Field(default=0)               # 定时抓取间隔（分钟），0=不定时
+    last_run_at: Optional[dt.datetime] = Field(default=None)  # 上次自动抓取时间（定时循环判断用）
+    updated_at: dt.datetime = Field(default_factory=utcnow)
+
+
 # --- 列布局（每个表的列顺序+宽度，存后端，所有人一致）------------------------
 
 class ColumnLayout(SQLModel, table=True):

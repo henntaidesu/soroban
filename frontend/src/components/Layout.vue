@@ -65,6 +65,7 @@ const nav = [
   { path: '/taobao', title: '淘宝订单', icon: 'ShoppingCart' },
   { path: '/shipment', title: '集运订单', icon: 'Ship' },
   { path: '/misc', title: '杂项支出', icon: 'Money' },
+  { path: '/plugins', title: '插件管理', icon: 'Connection' },
 ]
 
 // —— 响应式：≤768px 视为手机，侧栏收成抽屉 ——

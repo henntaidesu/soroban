@@ -1,15 +1,17 @@
 # soroban（算盤）
 
-个人代购／集运记账系统。追踪「淘宝下单 → 快递 → 君丰(JF)集运到日本 → 杂项」的全流程开销，**统一按日元结算**，双币（人民币／日元）记账。
+个人代购／集运记账系统。追踪「淘宝下单 → 快递 → 集运到日本 → 杂项」的全流程开销，**统一按日元结算**，双币（人民币／日元）记账。
 
 ## 功能
 
-- **看板**：总支出、按月趋势、各类占比（淘宝商品／君丰运费／杂项）
-- **淘宝订单**：可编辑表格，支持手动录入 + 加行 + 改行
-- **君丰订单**：一个 JF 订单关联多个淘宝订单（集运合包）
+- **看板**：总支出、按月趋势、各类占比（淘宝商品／集运运费／杂项）
+- **淘宝订单**：可编辑表格，手动录入 + 加行 + 改行；列可拖动改序/改宽（持久化）
+- **集运订单**：一个集运单关联多个淘宝订单（合包），展开可看/增删关联单
 - **杂项支出**
-- **双币结算**：填人民币自动按当日汇率折算日元，可手动覆盖实付金额
-- **登录**：多人共用一本账，登录状态长期保持
+- **双币结算**：填人民币按下单日期匹配当日汇率折算日元，可手动覆盖实付日元
+- **全部订单（暂存区）**：待处理的淘宝订单，逐单「导入」进账本
+- **爬虫插件**：`scraper/` 下的淘宝订单爬虫，soroban 自动发现、在「插件管理」页做授权/参数/定时（各插件独立 venv+Playwright，被 soroban git 排除）
+- **登录**：多人共用一本账，登录状态长期保持（默认 90 天）
 
 ## 技术栈
 
@@ -18,24 +20,32 @@
 | 前端 | Vue 3 + Element Plus + Vite + Axios |
 | 后端 | FastAPI + SQLModel |
 | 数据库 | SQLite（WAL 模式） |
-| 迁移 | Alembic |
-| 汇率 | open.er-api.com（CNY→JPY） |
+| 迁移 | 暂无 Alembic：`create_all` 自动建新表 + 启动时自动补新增的可空列（见「更新」章）；数据量大后可再引入 Alembic |
+| 汇率 | open.er-api.com（CNY→JPY，免费无 key） |
 
 ## 目录结构
 
 ```
 soroban/
-├── backend/            FastAPI + SQLModel
+├── backend/                FastAPI + SQLModel
 │   ├── app/
-│   │   ├── config.py   配置（读 .env）
-│   │   ├── database.py engine + WAL
-│   │   ├── models.py   数据模型
-│   │   ├── routers/    REST 接口
-│   │   ├── services/   汇率等
-│   │   └── bot/        （将来）订单自动抓取
-│   └── requirements.txt
-├── frontend/           React + Vite + Ant Design
-└── docs/               开发记录、设计决策
+│   │   ├── config.py       配置（读 .env）
+│   │   ├── database.py     engine + WAL + 加列式补迁移
+│   │   ├── models.py       数据模型
+│   │   ├── schemas.py      请求/响应模型
+│   │   ├── auth.py         登录/JWT/密码哈希
+│   │   ├── seed.py         建 admin（CLI）
+│   │   ├── demo.py         灌演示数据（CLI）
+│   │   ├── routers/        REST 接口（auth/taobao/shipment/misc/staging/dashboard/fx/layout/tags/plugins）
+│   │   └── services/       汇率等
+│   ├── requirements.txt        直接依赖（宽松版本）
+│   └── requirements.lock.txt   锁定版本（可复现安装）
+├── frontend/               Vue 3 + Element Plus + Vite
+├── scraper/                爬虫插件（各自成库/venv，soroban git 排除，仅留 README）
+│   └── soroban-scraper-taobao/   淘宝订单爬虫（Playwright + H5/桌面 mtop 抓包）
+├── docs/                   开发记录、设计决策、抓包实测记录
+├── start.sh                一键启动（开发）
+└── backup.sh               数据库备份（WAL 安全）
 ```
 
 ## 本地运行
@@ -44,30 +54,91 @@ soroban/
 ```bash
 ./start.sh
 ```
-首次运行自动建 venv、装前后端依赖、生成 `.env`（随机 SECRET_KEY）、建 admin；之后直接同时起后端(8000)+前端(5173)。浏览器开 http://localhost:5173 （默认 `admin` / `admin123`），Ctrl+C 一起停。
+首次运行自动建 venv、装前后端依赖、生成 `backend/.env`（随机 SECRET_KEY）、建 admin；之后同时起后端(8000)+前端(5173)。浏览器开 http://localhost:5173 （默认 `admin` / `admin123`），Ctrl+C 一起停。
 
----
-
-手动分开跑：
+<details><summary>手动分开跑</summary>
 
 后端：
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # 编辑 SECRET_KEY 等
-python -m app.seed            # 建 admin（默认 admin/admin123）
+python3 -m venv .venv && source .venv/bin/activate     # 需 Python 3.11+
+pip install -r requirements.txt                        # 或 requirements.lock.txt（锁定版本）
+cp .env.example .env
+python -c "import secrets;print(secrets.token_hex(32))" # 把输出填进 .env 的 SECRET_KEY=
+python -m app.seed                                     # 建 admin（默认 admin/admin123）
 uvicorn app.main:app --reload --port 8000
 ```
-
-前端（另开一个终端）：
+前端（另开终端）：
 ```bash
 cd frontend
 npm install
 npm run dev                   # http://localhost:5173 （代理 /api → :8000）
 ```
+</details>
+
+## 全新机器部署
+
+**前置**：`git`、**Python 3.11+**（插件用到标准库 `tomllib`）、`node`/`npm`。
+
+```bash
+git clone https://github.com/Gosoki/soroban.git
+cd soroban
+SOROBAN_ADMIN_PASS='你的强密码' ./start.sh     # 首次即设定管理员密码（不设则默认 admin123）
+```
+`start.sh` 会自动：建 venv、装依赖、生成含随机 SECRET_KEY 的 `.env`、建 admin、装前端依赖、起服务。浏览器开 http://localhost:5173 。
+
+- **局域网从别的设备访问**：`start.sh` 默认后端只绑 `127.0.0.1`。要开放：后端起用 `--host 0.0.0.0`、前端 `npm run dev -- --host`（已含 `--host`），并把本机 IP 加进 `.env` 的 `CORS_ORIGINS`。⚠️ 开放前**务必改掉默认密码**（见下）。
+- **爬虫插件（可选）**：soroban 只发现插件、不含其代码。要用淘宝爬虫，进各插件目录各自安装：
+  ```bash
+  cd scraper/soroban-scraper-taobao
+  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+  .venv/bin/python -m playwright install chromium
+  ```
+  装好后在 soroban「插件管理」页即显示「已安装」，在那里扫码授权、设账号/定时。详见 `scraper/soroban-scraper-taobao/README.md`。
+
+### 生产 / 长期运行（单进程、同源，无需 vite）
+
+`start.sh` 是**开发模式**（`--reload` + vite dev server）。长期跑推荐构建前端、由后端同源托管：
+```bash
+cd frontend && npm run build          # 产出 frontend/dist
+cd ../backend && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000   # 不加 --reload
+```
+后端检测到 `frontend/dist` 会自动托管它（`/api/*` 走后端、其余回退到前端），于是**只需一个进程、一个端口(8000)**，前端相对 `/api` 天然同源、无跨域。可再用 macOS `launchd` / Linux `systemd` 做开机自启+崩溃重启。
+
+## 更新（git）
+
+```bash
+./backup.sh            # 1) 先备份数据库（重要）
+git pull               # 2) 拉最新（在 master 分支）
+# 3) 依赖有变才重装：
+#    后端 backend/requirements*.txt 有变 → 进 backend 重新 pip install
+#    前端 package.json 有变 → cd frontend && npm install（生产别忘 npm run build）
+# 4) 重启服务（重新跑 ./start.sh，或重启你的 uvicorn/systemd）
+```
+
+**数据库结构变更怎么办**：本项目无 Alembic，靠启动时的 `create_db_and_tables()`——
+- **新增的表**：`create_all` 自动建。✅
+- **已有表新增的「可空列」**：启动时 `_add_missing_columns()` 自动对比模型与实际表结构、`ALTER ADD` 补齐。✅
+- **改列类型 / 加非空列 / 改约束/唯一索引 / 删改列** 等结构性变更：**不自动**，需手动迁移——先 `./backup.sh`，再手写 `ALTER`/`sqlite3` 迁移，或导出数据→重建库→导回。日志里会 `WARNING` 提示需手动处理的列。
+> 你的 `.db` 与 `backups/` 都被 gitignore，`git pull` 不会动到数据。升级前务必先 `./backup.sh`。
+
+## 备份
+
+```bash
+./backup.sh            # 用 sqlite3 .backup，WAL 安全；自动保留最近 30 份到 backups/
+```
+建议挂定时（macOS 用 `launchd`，或 `crontab -e`）：
+```
+0 3 * * * /path/to/soroban/backup.sh >> /path/to/soroban/backups/backup.log 2>&1
+```
+
+## 默认账号 / 改密码
+
+默认 `admin` / `admin123`。**首次部署就用 `SOROBAN_ADMIN_PASS='强密码' ./start.sh` 设定密码**。
+> 目前没有「应用内改密码」入口——若已用默认密码建过号又想改，可删掉 `backend/soroban.db*` 后用新的 `SOROBAN_ADMIN_PASS` 重新建（会丢数据），或联系我加一个改密码接口。局域网/多人使用前请务必改掉默认密码。
 
 ## 状态
 
-✅ 首版 MVP 已完成并自测通过：登录 + 三张「列表/编辑」页 + 看板 + 双币结算 + 汇率。
-详见 [docs/](docs/)。机器人抓取、收入/利润等为预留项。
+稳定迭代中（详见 [docs/README.md](docs/README.md) 的版本记录）。已完成：登录、看板、淘宝/集运/杂项三页、双币结算与汇率、全部订单暂存与导入、列布局持久化、淘宝爬虫插件（已可用）。
+预留项：收入/利润（卖出侧打通）、导出 CSV/Excel、i18n、Alembic 迁移。
+</content>

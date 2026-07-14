@@ -33,18 +33,18 @@
     </template>
   </div>
 
-  <!-- long：长文本(如商品标题) → 点开弹出宽 textarea 编辑（无悬停预览）。reference 是纯 div，锚点正确不飘。 -->
-  <el-popover v-else-if="col.long" :visible="editing" :width="380" :offset="4"
-              placement="bottom-start" @update:visible="(v) => !v && commit()">
+  <!-- long：长文本(如商品标题) → 点开弹宽 textarea 编辑（无悬停预览）。手动控制：只有点到弹窗+单元格
+       以外才关闭并保存(commit 仅值变才 emit)；点框内/点单元格本身都不关；Esc 取消。固定 4 行防漂移。 -->
+  <el-popover v-else-if="col.long" trigger="manual" :visible="editing" :width="380" :offset="4"
+              placement="bottom-start">
     <template #reference>
-      <div class="gtn-disp" @click="!editing && start()">
+      <div ref="refEl" class="gtn-disp" @click="!editing && start()">
         <span v-if="disp !== null">{{ disp }}</span>
         <span v-else class="ph">{{ emptyText }}</span>
       </div>
     </template>
-    <!-- 点弹窗外面才关闭并保存(commit 仅值变才 emit)；Esc 取消。固定 4 行不 autosize，防输入时框变高带着弹窗漂移。 -->
-    <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
-              :rows="4" resize="none" @keydown.esc="close" />
+    <el-input ref="inp" v-model="editVal" v-click-outside="onClickOutside" type="textarea"
+              class="gtn-long-in" :rows="4" resize="none" @keydown.esc="close" />
   </el-popover>
 
   <!-- text / decimal / int -->
@@ -62,7 +62,7 @@
 
 <script setup>
 import { computed, nextTick, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ClickOutside as vClickOutside, ElMessage } from 'element-plus'
 import { Check } from '@element-plus/icons-vue'
 import { fmtCNY, fmtJPY } from '@/utils/money'
 import { statusStyle, tagStyleAt } from '@/constants'
@@ -77,6 +77,14 @@ const emit = defineEmits(['change'])
 const editing = ref(false)
 const editVal = ref(null)
 const inp = ref(null)
+const refEl = ref(null)   // long 单元格 reference，用于 click-outside 判断"点到单元格本身不算外面"
+
+// long 编辑：只有点到「弹窗 + 单元格」以外才关闭并保存（点框内、点单元格本身都不关）
+function onClickOutside(e) {
+  if (!editing.value) return
+  if (refEl.value && refEl.value.contains(e.target)) return   // 点单元格本身不关（含刚打开那一下）
+  commit()
+}
 // 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
 function tagAttrs(v) {
   if (!props.col.tagColored) return { style: statusStyle(v) }

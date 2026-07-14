@@ -49,17 +49,27 @@
 
         <template #expand="{ row }">
           <div class="expand">
-            <div class="ex-title">物品明细（一单多物）</div>
-            <div v-for="(it, i) in row.items" :key="i" class="item-row">
-              <el-input v-model="it.name" size="small" placeholder="物品名" style="width: 180px" />
-              <el-input-number v-model="it.quantity" :min="1" size="small" />
-              <el-button link type="danger" :icon="Delete" @click="row.items.splice(i, 1)" />
-            </div>
-            <div>
-              <el-button size="small" :icon="Plus" @click="ensureItems(row).push({ name: '', quantity: 1 })">加物品</el-button>
-              <el-button size="small" type="primary" @click="saveItems(row)">保存物品</el-button>
-            </div>
-            <div class="ex-hint">集运归属在上面「集运(点选)」列里改。</div>
+            <table class="item-tbl">
+              <colgroup>
+                <col class="c-name" />
+                <col class="c-qty" />
+                <col class="c-act" />
+              </colgroup>
+              <tbody>
+                <tr v-for="(it, i) in (row.items || [])" :key="i">
+                  <td><el-input v-model="it.name" size="small" placeholder="物品名" @change="saveItems(row)" /></td>
+                  <td><el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" @change="saveItems(row)" /></td>
+                  <td class="c-act"><el-button link type="danger" :icon="Delete" tabindex="-1" @click="removeItem(row, i)" /></td>
+                </tr>
+                <!-- 末尾草稿行：输入名称并失焦/回车即成为新物品并自动写库，随后又出现空行可继续录入 -->
+                <tr v-if="drafts[row.id]" class="draft-row">
+                  <td><el-input v-model="drafts[row.id].name" size="small" placeholder="+ 新物品名，输入后自动保存"
+                                @change="commitDraft(row)" @keyup.enter="commitDraft(row)" /></td>
+                  <td><el-input-number v-model="drafts[row.id].quantity" :min="1" :controls="false" size="small" /></td>
+                  <td class="c-act"></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </template>
 
@@ -79,7 +89,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete, Plus } from '@element-plus/icons-vue'
+import { Check, Delete } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
 import { TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
@@ -116,6 +126,8 @@ const pageSize = 30
 const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
 const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
+const drafts = reactive({})   // { rowId: { name, quantity } } 每行末尾的「新物品」草稿输入
+function ensureDraft(id) { if (!drafts[id]) drafts[id] = { name: '', quantity: 1 } }
 
 function shipById(id) { return shipmentOptions.value.find((j) => j.id === id) }
 function shipNo(id) { const j = shipById(id); return j ? (j.shipment_no || ('#' + id)) : ('#' + id) }
@@ -149,6 +161,7 @@ async function load() {
     const res = await taobaoApi.list(params)
     rows.value = res.items
     total.value = res.total
+    rows.value.forEach((r) => ensureDraft(r.id))
   } finally {
     loading.value = false
   }
@@ -177,11 +190,29 @@ async function saveItems(row) {
     .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1 }))
   try {
     const updated = await taobaoApi.update(row.id, { version: row.version, items })
-    Object.assign(row, updated)
-    ElMessage.success('物品已保存')
+    Object.assign(row, updated)   // 自动保存：静默写库，不弹提示
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
   }
+}
+
+// 删除某物品：二次确认后再移除并写库
+async function removeItem(row, i) {
+  const it = row.items?.[i]
+  try {
+    await ElMessageBox.confirm(`删除物品「${it?.name || '未命名'}」？`, '确认', { type: 'warning' })
+  } catch (_) { return }
+  row.items.splice(i, 1)
+  saveItems(row)
+}
+
+// 末尾草稿录入完成：转为正式物品、清空草稿、自动写库；随后草稿行再次出现可继续录入
+async function commitDraft(row) {
+  const d = drafts[row.id]
+  if (!d || !d.name || !d.name.trim()) return
+  ensureItems(row).push({ name: d.name.trim(), quantity: Number(d.quantity) || 1 })
+  drafts[row.id] = { name: '', quantity: 1 }
+  await saveItems(row)
 }
 
 async function addRow(data = {}) {
@@ -189,6 +220,7 @@ async function addRow(data = {}) {
     // status 不写死：后端 TaobaoBase 默认「待发货」，避免枚举改名后前端残留非法值（曾用'已付'→422）
     const created = await taobaoApi.create({ date: today(), ...data })
     rows.value.unshift(created)
+    ensureDraft(created.id)
     total.value++
   } catch (_) { /* 拦截器已提示 */ }
 }
@@ -200,6 +232,7 @@ async function delRow(row) {
   try {
     await taobaoApi.remove(row.id)
     rows.value = rows.value.filter((r) => r.id !== row.id)
+    delete drafts[row.id]
     total.value--
     ElMessage.success('已删除')
   } catch (_) { /* 拦截器已提示 */ }
@@ -225,9 +258,21 @@ onMounted(() => { loadShipment() })
 .focus-empty { color: #9ba8bf; font-size: 13px; padding: 16px; text-align: center; }
 .ph { color: #5b6880; }
 .expand { padding: 12px 20px; }
-.ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }
-.ex-hint { color: #7d8aa3; font-size: 12px; margin-top: 8px; }
-.item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+/* 二级子表格：视觉与一级列表(NotionTable)一致——同样的边框、行高与悬停；无表头 */
+.item-tbl { border-collapse: collapse; font-size: 13px; color: #d6deea; table-layout: fixed; }
+.item-tbl col.c-name { width: 260px; }
+.item-tbl col.c-qty { width: 110px; }
+.item-tbl col.c-act { width: 64px; }
+.item-tbl td { height: 36px; padding: 0; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
+.item-tbl tbody tr:hover td { background: #1b2942; }
+.item-tbl td.c-act { text-align: center; }
+/* 单元格内输入做成无边框，贴合一级列表的扁平格子观感 */
+.item-tbl :deep(.el-input__wrapper),
+.item-tbl :deep(.el-input-number .el-input__wrapper) {
+  box-shadow: none !important; background: transparent; padding: 0 10px; height: 36px;
+}
+.item-tbl :deep(.el-input-number) { width: 100%; line-height: normal; }
+.item-tbl :deep(.el-input-number .el-input__inner) { text-align: left; }
 /* 集运点选：内嵌无边框，像格子里的选择 */
 .ship-pick { width: 100%; }
 .ship-pick :deep(.el-select__wrapper),

@@ -12,6 +12,12 @@ set "FRONTEND=%ROOT%\frontend"
 set "PY_BIN=%BACKEND%\.venv\Scripts\python.exe"
 set "UVICORN_BIN=%BACKEND%\.venv\Scripts\uvicorn.exe"
 
+REM ---- ports (shared by backend + frontend so vite proxy always matches) ----
+REM vite.config.js reads BACKEND_PORT/FRONTEND_PORT from the environment; setting
+REM them here keeps uvicorn's port and vite's /api proxy target in sync.
+if not defined BACKEND_PORT set "BACKEND_PORT=8620"
+if not defined FRONTEND_PORT set "FRONTEND_PORT=8621"
+
 REM ---- environment checks ----
 where python >nul 2>nul
 if errorlevel 1 goto no_python
@@ -52,17 +58,20 @@ popd
 :front_ok
 
 REM ---- start ----
-echo Starting backend  -^> http://127.0.0.1:8000  (docs at /docs)
-start "soroban-backend" /d "%BACKEND%" cmd /k ""%UVICORN_BIN%" app.main:app --host 127.0.0.1 --port 8000 --reload"
+REM Run both services in THIS console (no popup windows). Backend runs in the
+REM background via "start /b" (its output still prints here); frontend runs in the
+REM foreground so this window stays alive. Press Ctrl+C to stop.
+echo Starting backend  -^> http://127.0.0.1:%BACKEND_PORT%  (docs at /docs)
+start "soroban-backend" /b /d "%BACKEND%" "%UVICORN_BIN%" app.main:app --host 127.0.0.1 --port %BACKEND_PORT% --reload
 
-echo Starting frontend -^> http://localhost:5173
-start "soroban-frontend" /d "%FRONTEND%" cmd /k "npm run dev"
-
+echo Starting frontend -^> http://localhost:%FRONTEND_PORT%
 echo.
 echo soroban started. Default login: admin / admin123
-echo Open http://localhost:5173 in your browser. Close the two popup windows to stop.
+echo Open http://localhost:%FRONTEND_PORT% in your browser. Press Ctrl+C to stop.
 echo.
-pause
+pushd "%FRONTEND%"
+call npm run dev
+popd
 goto :eof
 
 :no_python

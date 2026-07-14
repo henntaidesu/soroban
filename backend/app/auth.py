@@ -25,13 +25,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(user: User, expires_delta: Optional[dt.timedelta] = None) -> str:
     now = dt.datetime.now(dt.timezone.utc)
     payload = {
         "sub": str(user.id),
         "username": user.username,
         "iat": now,
-        "exp": now + dt.timedelta(days=settings.TOKEN_EXPIRE_DAYS),
+        "exp": now + (expires_delta or dt.timedelta(days=settings.TOKEN_EXPIRE_DAYS)),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 

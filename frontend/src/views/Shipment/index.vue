@@ -20,10 +20,16 @@
           <div class="expand">
             <div class="ex-title">关联淘宝订单（在此点选增删；淘宝页「集运(点选)」列也能改）</div>
             <el-table v-if="row.taobao_orders && row.taobao_orders.length" :data="row.taobao_orders" size="small">
+              <el-table-column label="下单日期" width="110">
+                <template #default="{ row: t }"><span :class="t.date ? '' : 'ph'">{{ t.date || '—' }}</span></template>
+              </el-table-column>
               <el-table-column label="订单号" min-width="130">
                 <template #default="{ row: t }">
                   <el-link type="primary" :underline="false" @click="gotoOrder(t)">{{ t.order_no || ('#' + t.id) }}</el-link>
                 </template>
+              </el-table-column>
+              <el-table-column label="商品" min-width="160" show-overflow-tooltip>
+                <template #default="{ row: t }"><span :class="t.shop ? '' : 'ph'">{{ t.shop || '—' }}</span></template>
               </el-table-column>
               <el-table-column label="物品" min-width="180">
                 <template #default="{ row: t }">

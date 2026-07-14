@@ -94,7 +94,7 @@ const today = () => {
 // 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
 const COL_W = 110
 const columns = [
-  { key: 'date', label: '日期', type: 'date', width: COL_W },
+  { key: 'date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },

@@ -14,6 +14,8 @@ yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 red() { printf "\033[31m%s\033[0m\n" "$1"; }
 
 command -v python3 >/dev/null || { red "缺少 python3"; exit 1; }
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' \
+  || { red "需要 Python 3.11+（插件用到标准库 tomllib）；当前 $(python3 -V)"; exit 1; }
 command -v node >/dev/null || { red "缺少 node（前端需要）"; exit 1; }
 
 # ---- 后端首次设置 ----

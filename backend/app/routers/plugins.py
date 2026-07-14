@@ -111,7 +111,10 @@ def list_plugins(session: Session = Depends(get_session)):
     out = []
     for m in discover():
         cfg = session.get(PluginConfig, m["id"])
-        params = json.loads(cfg.params_json) if cfg else {}
+        try:
+            params = json.loads(cfg.params_json) if cfg else {}
+        except Exception:                               # params_json 被手改坏也不 500
+            params = {}
         accts = _accounts(cfg)
         out.append({
             "id": m["id"], "name": m.get("name", m["id"]), "version": m.get("version"),
@@ -159,7 +162,7 @@ def fetch(
     accts = [account] if account else _accounts(cfg)
     if not accts:
         raise HTTPException(status_code=400, detail="没有账号可抓：先在插件配置里填账号。")
-    token = create_access_token(current)                # 下发短期 token（走环境变量，不进 argv），插件免存密码
+    token = create_access_token(current, dt.timedelta(minutes=30))   # 真·短期 token（30min，够抓一次），走环境变量不进 argv
     pids = [_launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token) for a in accts]
     return {"started": True, "accounts": accts, "pids": pids}
 
@@ -186,7 +189,7 @@ def _run_due(session: Session) -> None:
         m = manifests.get(cfg.plugin_id)
         if not m or not _python(m).exists():
             continue
-        token = token or create_access_token(user)
+        token = token or create_access_token(user, dt.timedelta(minutes=30))
         launched = 0
         for a in _accounts(cfg):
             try:

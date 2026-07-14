@@ -15,7 +15,7 @@
 - **后端 FastAPI + SQLModel**：Python 栈，和已有的 hiyori 项目同源。将来的抓取机器人走同一套 SQLModel 写库。
 - **SQLite + WAL**：个人单机足够，WAL 让「2 人 + 机器人」的低并发读写互不阻塞。升级信号：高频并发写或上公网多人 → 换 Postgres，SQLModel 层基本不动。
 - **Alembic**：从第一天管迁移（骨架期暂用 `create_all`，稳定后切 Alembic）。
-- **不用 WebSocket / NiceGUI**：曾评估 NiceGUI（纯 Python 全栈），但它强依赖常连 WS；用户倾向无状态 REST + 精致前端，故走 React。
+- **不用 WebSocket / NiceGUI**：曾评估 NiceGUI（纯 Python 全栈），但它强依赖常连 WS；用户倾向无状态 REST + 精致前端，故走 REST + Vue3（最终选型，见上「为何改栈」）。
 
 ## 数据模型
 
@@ -453,3 +453,12 @@
 - **平台区分/闲鱼**：用户暂缓（闲鱼数据链路当前不通），本版不采集平台标记。
 - **二次对抗审查（2 agent）+ 修**：`cmd_fetch` 回灌段未包 try（token 过期/soroban 掉线会抛裸栈、soroban 收不到 JSON 结果行）→ 包住吐 `{ok:false}`；`unit_price` 未去「￥」→ 过 `_money`；翻页增量早停由「任一已见」改「整页已见」子集判定 + 点下一页后轮询新页真入列再读（防 expect_response 与 on_response 竞态）；首页响应改**轮询等待**(修 `pages[-1]` IndexError，实机首跑即命中已修)。
 - 自测：离线解析桌面页 30 单(下单日期全有、unit_price 去符号、状态取交易态)；端到端回灌幂等(created→updated)；**实机 `fetch --account c2` 跑通**(真桌面浏览器、无风控、增量停在第 1 页、staging 30 单)；后端热重载 200、前端 `vite build` 通过。
+
+### 第三十七版：全项目审查（5 维 / 27 确认）+ 部署更新文档 + 加列式自动迁移
+用户要「整个项目过一次、修 bug、能否上线、全新机器怎么部署、以后 git 怎么更新」。5 维多智能体对抗审查（后端/安全/前端/运维部署/文档，27 条确认，1 high/7 med/19 low）。结论：后端金额/并发/软删/乐观锁/导入/看板/汇率**无真实 bug**、可判个人自用生产可用；缺口集中在**部署与文档**。已修：
+- **(high 迁移) 加列式自动迁移**：`database.py` 去掉写死的 `_ADDED_COLUMNS`，改为启动时对比 model 与实际表、自动 `ALTER ADD` 缺失的**可空列**（非空无默认列只告警不动，需手动）。修掉历史踩过的坑（395abc8 加 fx_rate/order_status 未同步 → 旧库 git pull 后 `no such column`）；已用模拟旧库实测：缺列被自动补齐。
+- **(med 生产托管) 后端同源托管前端**：`main.py` 检测到 `frontend/dist` 即 `StaticFiles` 挂载（挂最后，`/api/*` 优先）→ 生产只跑一个 uvicorn(不 --reload)、一个端口、无跨域；dev 无 dist 则跳过照旧用 vite。
+- **(小修)** 插件下发 token 改真短期(30min)；`list_plugins` 的 `params_json` 解析加兜底防 500；`create_order` 加 `_check_shipment` 让挂靠不存在集运单走友好 422；`NotionTable` 列宽回退支持 `minWidth`；`start.sh` 校验 Python 3.11+；生成 `requirements.lock.txt`（锁定版本）；`.env.example` 补可选项注释；`docs` 里「故走 React」笔误改正。
+- **文档**：根 `README.md` 基本重写——技术栈(Vue3/Element Plus，迁移写实)、目录结构(补 scraper/、去 bot/React)、君丰→集运、状态段更新，新增**「全新机器部署」「生产/长期运行」「更新(git)」「备份」「默认账号/改密码」**五章。
+- **待用户拍板（未改）**：(1) 是否加「应用内改密码」接口（现只能首次用 `SOROBAN_ADMIN_PASS` 设、之后无改密入口）；(2) 是否开局域网(绑 0.0.0.0，开前必改密码)；(3) 是否引入 Alembic（当前加列式自动迁移够日常；结构性变更仍需手动+备份）。
+- 自测：后端语法/热重载/既有接口全 200、加列迁移模拟实测、前端 `vite build` 通过；`.env`/`*.db`/`.state`/`backups` 均 gitignore、无敏感文件入库。

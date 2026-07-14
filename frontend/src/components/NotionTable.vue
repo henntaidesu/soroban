@@ -8,7 +8,7 @@
           <col :style="{ width: ID_COL_W + 'px' }" />
           <col v-if="hasActions" :style="{ width: actionsWidth + 'px' }" />
           <col v-if="expandable" :style="{ width: EXPAND_COL_W + 'px' }" />
-          <col v-for="col in cols" :key="col.key" :style="{ width: (col.width || DEFAULT_COL_W) + 'px' }" />
+          <col v-for="col in cols" :key="col.key" :style="{ width: (col.width || col.minWidth || DEFAULT_COL_W) + 'px' }" />
         </colgroup>
 
         <thead>
@@ -135,7 +135,7 @@ const hasActions = computed(() => !!slots.actions)
 const colspan = computed(() => 1 + (props.expandable ? 1 : 0) + cols.value.length + (hasActions.value ? 1 : 0))
 const totalWidth = computed(() =>
   ID_COL_W + (props.expandable ? EXPAND_COL_W : 0)
-  + cols.value.reduce((s, c) => s + (c.width || DEFAULT_COL_W), 0)
+  + cols.value.reduce((s, c) => s + (c.width || c.minWidth || DEFAULT_COL_W), 0)
   + (hasActions.value ? Number(props.actionsWidth) : 0),
 )
 const hasNew = computed(() =>

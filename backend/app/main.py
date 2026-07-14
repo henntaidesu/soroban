@@ -70,3 +70,15 @@ async def _integrity_handler(request: Request, exc: IntegrityError):
 @app.get("/api/health", tags=["health"])
 def health():
     return {"ok": True}
+
+
+# 生产托管：若前端已 `npm run build` 出 frontend/dist，则由后端**同源**托管静态文件。
+# 挂在最后 → /api/* 仍走上面的路由；其余路径回退到 SPA（index.html）。这样生产只需跑
+# 一个 uvicorn（不用再单独起 vite，也无跨域），dev 时没有 dist 目录则跳过、照旧用 vite。
+from pathlib import Path  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
+    log.info("已挂载前端静态文件（生产同源托管）：%s", _DIST)

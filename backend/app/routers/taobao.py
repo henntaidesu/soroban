@@ -79,6 +79,7 @@ def create_order(payload: TaobaoCreate, session: Session = Depends(get_session))
 
     data = payload.model_dump(exclude={"items"})
     order = TaobaoOrder(**data)
+    _check_shipment(session, order.shipment_order_id)   # 挂靠的集运单不存在/已删 → 友好 422（而非 FK 撞库转 409）
     if order.fx_rate is None:                 # 新建时写入当天汇率
         order.fx_rate = current_rate(session)
     order.compute_money()

@@ -9,6 +9,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import os
 import shlex
 import subprocess
 import tomllib
@@ -85,15 +86,19 @@ def _python(manifest: dict) -> Path:
     return manifest["_dir"] / manifest.get("python", ".venv/bin/python")
 
 
-def _launch(manifest: dict, command: str, extra: list[str]) -> int:
-    """子进程调插件 CLI（fire-and-forget；插件输出进它自己的日志/回灌暂存）。"""
+def _launch(manifest: dict, command: str, extra: list[str], token: Optional[str] = None) -> int:
+    """子进程调插件 CLI（fire-and-forget；插件输出进它自己的日志/回灌暂存）。
+
+    token 走**环境变量** SOROBAN_TOKEN 下发，不进 argv——避免短期凭据出现在进程表(ps)/日志里。
+    """
     python = _python(manifest)
     if not python.exists():
         raise HTTPException(status_code=400, detail=f"插件未安装：缺 venv（{python}）。见插件 README。")
     cmd = [str(python)] + shlex.split(manifest.get("entry", "")) + [command] + extra
+    env = {**os.environ, "SOROBAN_TOKEN": token} if token else None
     try:
         proc = subprocess.Popen(
-            cmd, cwd=str(manifest["_dir"]),
+            cmd, cwd=str(manifest["_dir"]), env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
         )
     except (OSError, ValueError) as e:
@@ -154,8 +159,8 @@ def fetch(
     accts = [account] if account else _accounts(cfg)
     if not accts:
         raise HTTPException(status_code=400, detail="没有账号可抓：先在插件配置里填账号。")
-    token = create_access_token(current)                # 下发短期 token，插件免存密码
-    pids = [_launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL, "--token", token]) for a in accts]
+    token = create_access_token(current)                # 下发短期 token（走环境变量，不进 argv），插件免存密码
+    pids = [_launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token) for a in accts]
     return {"started": True, "accounts": accts, "pids": pids}
 
 
@@ -182,13 +187,16 @@ def _run_due(session: Session) -> None:
         if not m or not _python(m).exists():
             continue
         token = token or create_access_token(user)
+        launched = 0
         for a in _accounts(cfg):
             try:
-                _launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL, "--token", token])
+                _launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token)
+                launched += 1
             except HTTPException as e:
                 log.warning("定时抓取 %s/%s 启动失败：%s", cfg.plugin_id, a, e.detail)
-        cfg.last_run_at = now
-        session.add(cfg)
+        if launched:                                    # 只有真的起了进程才推进 last_run_at
+            cfg.last_run_at = now                       # 空账号/全部启动失败 → 不推进，下轮重试
+            session.add(cfg)
     session.commit()
 
 

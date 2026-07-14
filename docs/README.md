@@ -430,3 +430,16 @@
 - **soroban 前端**：新「插件管理」页（侧栏+路由）：每插件卡片示安装状态、启用/定时开关、参数表单（按 manifest 渲染）、每账号授权状态 + 「授权登录/重新授权」「抓这个号」、「抓取全部账号」；`api` 换 `scrapeApi`→`pluginsApi`。
 - **修占位 bug**：`session.py` 登录成功判定原用 glob `**taobao.com/**`——会匹配 `login.taobao.com` 本身而秒过（假成功、存下未登录的空会话）。改为谓词「跳离 login 子域才算成功」。
 - 自测：`GET /api/plugins` 发现 taobao（installed=true）；`PUT config` 存账号/定时；`POST fetch` fire-and-forget 起子进程（`scrape.log` 见对应账号 fetch 记录）；`login` 端点起进程；未知插件→404、无 token→401；回归既有 8 接口全 200、前端 `vite build` 通过。新增平台爬虫 = 建目录+`plugin.toml`+实现同款 CLI，soroban 自动认到。
+
+### 第三十五版：淘宝爬虫抓包实测落地（三 stub 填实）+ 闲鱼/平台勘探 + 全项目审查修复
+用户账号 `c2` 实测（**全程无风控**）：拟真 iPhone 仿真打开 H5 订单页、拦 mtop 拿真实结构，把第三十四版的三处诚实 stub 填成可用实现。
+- **接口实测**（记 `scraper/soroban-scraper-taobao/docs/接口与字段.md`）：订单列表接口 `mtop.taobao.order.queryboughtlistv2`（JSONP），订单在 `data.data` 下按 `<组件>_<订单号>` 聚合；`MainGroup.orderPrice`(分)=实付、`sellerInfo.status.text`=状态、`item.title/skuText/quantity`=商品/分类/数量、`Main.orderType=="fliggy"`=飞猪标记。分页=请求 `page` 递增（页面自带签名，滚动即触发）。
+- **字段映射（按用户约定）**：`session.py`（跳离 login 页 **且** 有登录态 cookie 才**原子写**会话）、`fetch.py`（`parse_orders` 纯函数离线可测 + 拟人抓取 + 命中风控即停）、`normalize.py`：**「店铺」列改放商品标题**、**「物品」= 分类名(skuText)×数量**（前端 `itemSummary` 显示 `名称×数量`）；`order_date/express_no` 列表接口没有→留空人工补。前端把暂存/淘宝页 `shop` 列标题 **店铺→商品**。
+- **闲鱼/平台区分报告**（`docs/闲鱼与平台区分.md`）：闲鱼订单**不在**淘宝订单列表里（只有「闲鱼转卖」按钮）→ 淘宝爬虫永不混入闲鱼；闲鱼是独立系统（`mtop.idle.web.trade.bought.list` / `www.goofish.com/bought`），且**淘宝会话搬不过去**（调其订单接口返回 `FAIL_SYS_SESSION_EXPIRED`、弹独立扫码登录），要抓需单独做 `soroban-scraper-xianyu` 插件。JD/PDD 按账号名区分（不加新功能）。
+- **风控**：两次抓包 + 一次实机 fetch 均无风控；对策与分级停手预案记 `docs/风控与对策.md`。
+- **全项目对抗审查（5 维度 → 逐条对抗验证，10 确认 0 误报）+ 全修**：
+  - **(med) 会话原子写 + 授权校验**：`storage_state` 直写会中途崩溃留坏 JSON、`has_session` 只判存在 → 「显示已授权却永远抓不了」。改临时文件 `os.replace` 原子写；`has_session` 校验能 `json.load`。
+  - **(med) 同账号抓取串行化**：定时/手动/CLI 并发会多开浏览器冲淘宝（风控红线）。加**跨进程文件锁** `<state_dir>/<account>.lock`，占用则抛 `AlreadyRunning` 软跳过。
+  - **(med) 已导入行只更状态**：`soroban_client` 对已导入行、当状态映射为 None 时会误 patch 整个 body 覆盖账本人工改值。改为已导入行**只**发 `order_status`（无则跳过），绝不回写其它字段。
+  - **(low×7)**：数量容错 `int(float(str(q)))`（防单个坏值拖垮整批）；分页**按业务页码去重**（原按含时间戳 URL 去重会漏页）；token 改走**环境变量 `SOROBAN_TOKEN`** 下发（不进 `ps`/argv）；定时 `last_run_at` 仅**成功启动才推进**（空账号/失败不推进，下轮重试）；删 `cmd_fetch` 里永不触发的 `NotImplementedError` 死分支+误导注释；删 `config.ACCOUNTS` 死代码；`_PUSH_FIELDS` 的 `fx_rate` 补前向兼容注释。
+- 自测：离线解析 30 单字段全对；端到端回灌 15/20 单**幂等**（created→updated）；**实机 `python -m taobao_scraper fetch --account c2` 跑通**（真浏览器 ~50s、无风控、staging 落 20 单）；`_qty/_page_of/文件锁/已导入行 guard` 单测通过；后端 plugins.py 改后热重载、既有接口 200；前端 `vite build` 通过。个人数据（会话/抓包）全 gitignore。

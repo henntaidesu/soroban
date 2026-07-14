@@ -12,7 +12,7 @@
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
           <el-input v-model="filters.taobao_account" placeholder="淘宝账号" clearable style="width: 130px" @change="reload" />
-          <el-input v-model="filters.q" placeholder="搜订单号/店铺" clearable style="width: 160px" @change="reload" />
+          <el-input v-model="filters.q" placeholder="搜订单号/商品" clearable style="width: 160px" @change="reload" />
         </template>
 
         <template #cell-items="{ row }">
@@ -65,7 +65,7 @@ import NotionTable from '@/components/NotionTable.vue'
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: 140 },
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 130, placeholder: '订单号' },
-  { key: 'shop', label: '店铺', type: 'text', minWidth: 110 },
+  { key: 'shop', label: '商品', type: 'text', minWidth: 110 },
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天汇率' },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },

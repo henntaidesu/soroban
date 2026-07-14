@@ -96,7 +96,7 @@ const columns = [
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 120, placeholder: '订单号' },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
   { key: 'express_no', label: '快递号', type: 'text', width: 110, placeholder: '快递号' },
-  { key: 'shop', label: '店铺', type: 'text', minWidth: 80 },
+  { key: 'shop', label: '商品', type: 'text', minWidth: 80 },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: 90, clearable: false },
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天汇率' },

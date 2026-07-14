@@ -12,6 +12,7 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Optional
@@ -31,7 +32,12 @@ router = APIRouter(
     prefix="/api/plugins", tags=["plugins"], dependencies=[Depends(get_current_user)]
 )
 
-_SOROBAN_ROOT = Path(__file__).resolve().parents[3]     # …/soroban
+# …/soroban；PyInstaller 打包后 scraper/ 不打入 exe，放 exe 同级目录随包分发。
+_SOROBAN_ROOT = (
+    Path(sys.executable).resolve().parent           # 打包后：exe 同级
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[3]        # 源码：…/soroban
+)
 _SELF_URL = f"http://127.0.0.1:{os.environ.get('BACKEND_PORT', '8620')}"   # soroban 自身地址（插件同机回灌用）
 
 

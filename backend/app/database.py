@@ -1,7 +1,9 @@
 """Database engine + session. SQLite in WAL mode (读写不互相阻塞)。
 建表/迁移走 Alembic（见 backend/alembic/、README「更新」章）。"""
 
+import asyncio
 import logging
+import sys
 from pathlib import Path
 from sqlite3 import Connection as SQLite3Connection
 
@@ -12,7 +14,12 @@ from sqlmodel import Session, create_engine
 from .config import settings
 
 log = logging.getLogger("soroban.db")
-_ROOT = Path(__file__).resolve().parents[1]   # backend/（alembic.ini 所在）
+# backend/（alembic.ini 所在）；PyInstaller 打包后 alembic.ini/alembic/ 打入 _MEIPASS 根。
+_ROOT = (
+    Path(sys._MEIPASS)                              # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[1]
+)
 
 # check_same_thread=False: FastAPI 在多个线程里用同一连接池
 engine = create_engine(
@@ -58,3 +65,35 @@ def create_db_and_tables() -> None:
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def _wal_truncate() -> None:
+    """把 WAL 里的改动合并回主库并**截断** -wal 文件（回收其占用的磁盘空间）。
+    运行期截断只清空 -wal（文件仍在，因库还开着）；进程退出、连接全关后 SQLite 才删除 -wal/-shm。"""
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+async def wal_checkpoint_loop(interval: int = 600) -> None:
+    """后台循环：每 interval 秒（默认 10 分钟）截断一次 WAL，控制 -wal 体积、及时回收空间。
+    放进 lifespan；单轮异常不结束循环。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            _wal_truncate()
+        except Exception as e:                          # 单轮失败不结束循环
+            log.warning("周期性 WAL checkpoint 失败：%s", e)
+
+
+def checkpoint_and_dispose() -> None:
+    """进程干净退出前调用：截断 WAL，再关闭连接池。
+    连接全部关闭后 SQLite 会自动删除 soroban.db-wal / soroban.db-shm。
+    （若进程被强杀，收尾不执行，这两个文件会残留——WAL 模式的固有行为，下次启动自动接管，不丢数据。）"""
+    try:
+        _wal_truncate()
+    except Exception as e:                              # 检查点失败不阻断关闭
+        log.warning("关库前 WAL checkpoint 失败：%s", e)
+    finally:
+        engine.dispose()                               # 关掉池内所有连接，触发 -wal/-shm 回收

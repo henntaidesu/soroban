@@ -33,23 +33,23 @@
     </template>
   </div>
 
-  <!-- long：长文本(如商品标题) → 点开弹出宽 textarea，看得全、可编辑；悬停有 tooltip -->
-  <el-popover v-else-if="col.long" :visible="editing" :width="380" :offset="4"
-              placement="bottom-start" @update:visible="(v) => !v && commit()">
-    <template #reference>
-      <el-tooltip :content="disp || ''" :disabled="editing || disp === null"
-                  :show-after="0" placement="top" popper-class="gtn-tip">
-        <div class="gtn-disp" @click="!editing && start()">
-          <span v-if="disp !== null">{{ disp }}</span>
-          <span v-else class="ph">{{ emptyText }}</span>
-        </div>
-      </el-tooltip>
-    </template>
-    <!-- 只有点击弹窗外面才关闭并保存(commit 仅在值有变化时才 emit，未改不发 PATCH)；Esc 取消不保存。 -->
-    <!-- 固定 4 行、不用 autosize：否则输入时 textarea 变高会带着弹窗重新定位→输入框漂移。长内容框内滚动。 -->
-    <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
-              :rows="4" resize="none" @keydown.esc="close" />
-  </el-popover>
+  <!-- long：长文本(如商品标题)。tooltip 包住 div（悬停看全名）；编辑弹窗用 virtual-ref 锚到**同一个 div**
+       但不包裹它——两个 popper 互不抢占，既有悬停预览、弹窗又稳稳定位在单元格下方、不飘。 -->
+  <template v-else-if="col.long">
+    <el-tooltip :content="disp || ''" :disabled="editing || disp === null"
+                :show-after="0" placement="top" popper-class="gtn-tip">
+      <div ref="cellRef" class="gtn-disp" @click="!editing && start()">
+        <span v-if="disp !== null">{{ disp }}</span>
+        <span v-else class="ph">{{ emptyText }}</span>
+      </div>
+    </el-tooltip>
+    <!-- 点弹窗外面才关闭并保存(commit 仅值变才 emit)；Esc 取消。固定 4 行不 autosize，防输入时框变高带着弹窗漂移。 -->
+    <el-popover :virtual-ref="cellRef" virtual-triggering :visible="editing" :width="380" :offset="4"
+                placement="bottom-start" @update:visible="(v) => !v && commit()">
+      <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
+                :rows="4" resize="none" @keydown.esc="close" />
+    </el-popover>
+  </template>
 
   <!-- text / decimal / int -->
   <div v-else class="gtn-disp" @click="!editing && start()">
@@ -81,6 +81,7 @@ const emit = defineEmits(['change'])
 const editing = ref(false)
 const editVal = ref(null)
 const inp = ref(null)
+const cellRef = ref(null)   // long 单元格的 div，供编辑弹窗 virtual-ref 锚定（不包裹、不与 tooltip 抢）
 // 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
 function tagAttrs(v) {
   if (!props.col.tagColored) return { style: statusStyle(v) }

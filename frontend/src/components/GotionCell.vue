@@ -33,23 +33,19 @@
     </template>
   </div>
 
-  <!-- long：长文本(如商品标题)。tooltip 包住 div（悬停看全名）；编辑弹窗用 virtual-ref 锚到**同一个 div**
-       但不包裹它——两个 popper 互不抢占，既有悬停预览、弹窗又稳稳定位在单元格下方、不飘。 -->
-  <template v-else-if="col.long">
-    <el-tooltip :content="disp || ''" :disabled="editing || disp === null"
-                :show-after="0" placement="top" popper-class="gtn-tip">
-      <div ref="cellRef" class="gtn-disp" @click="!editing && start()">
+  <!-- long：长文本(如商品标题) → 点开弹出宽 textarea 编辑（无悬停预览）。reference 是纯 div，锚点正确不飘。 -->
+  <el-popover v-else-if="col.long" :visible="editing" :width="380" :offset="4"
+              placement="bottom-start" @update:visible="(v) => !v && commit()">
+    <template #reference>
+      <div class="gtn-disp" @click="!editing && start()">
         <span v-if="disp !== null">{{ disp }}</span>
         <span v-else class="ph">{{ emptyText }}</span>
       </div>
-    </el-tooltip>
+    </template>
     <!-- 点弹窗外面才关闭并保存(commit 仅值变才 emit)；Esc 取消。固定 4 行不 autosize，防输入时框变高带着弹窗漂移。 -->
-    <el-popover :virtual-ref="cellRef" virtual-triggering :visible="editing" :width="380" :offset="4"
-                placement="bottom-start" @update:visible="(v) => !v && commit()">
-      <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
-                :rows="4" resize="none" @keydown.esc="close" />
-    </el-popover>
-  </template>
+    <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
+              :rows="4" resize="none" @keydown.esc="close" />
+  </el-popover>
 
   <!-- text / decimal / int -->
   <div v-else class="gtn-disp" @click="!editing && start()">
@@ -81,7 +77,6 @@ const emit = defineEmits(['change'])
 const editing = ref(false)
 const editVal = ref(null)
 const inp = ref(null)
-const cellRef = ref(null)   // long 单元格的 div，供编辑弹窗 virtual-ref 锚定（不包裹、不与 tooltip 抢）
 // 统一「柔和底色」标签：标签列按值哈希取色，状态列按语义取色
 function tagAttrs(v) {
   if (!props.col.tagColored) return { style: statusStyle(v) }
@@ -158,18 +153,4 @@ function choose(o) {
 .gtn-in :deep(.el-input__wrapper),
 .gtn-in :deep(.el-input-number) { box-shadow: none !important; background: transparent; width: 100% !important; }
 .gtn-in :deep(.el-input__inner) { height: 34px; font-size: 13px; color: inherit; text-align: left; }
-</style>
-
-<!-- 非 scoped：tooltip 传送到 body，需全局样式；配色对齐暗色主题 -->
-<style>
-.gtn-tip.el-popper {
-  background: #18233a !important;
-  border: 1px solid #28354a !important;
-  color: #e6edf7 !important;
-  max-width: 360px;
-}
-.gtn-tip.el-popper .el-popper__arrow::before {
-  background: #18233a !important;
-  border: 1px solid #28354a !important;
-}
 </style>

@@ -46,8 +46,9 @@
       </el-tooltip>
     </template>
     <!-- 只有点击弹窗外面才关闭并保存(commit 仅在值有变化时才 emit，未改不发 PATCH)；Esc 取消不保存。 -->
+    <!-- 固定 4 行、不用 autosize：否则输入时 textarea 变高会带着弹窗重新定位→输入框漂移。长内容框内滚动。 -->
     <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
-              :autosize="{ minRows: 2, maxRows: 8 }" @keydown.esc="close" />
+              :rows="4" resize="none" @keydown.esc="close" />
   </el-popover>
 
   <!-- text / decimal / int -->

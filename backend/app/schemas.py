@@ -77,6 +77,11 @@ class LoginRequest(SQLModel):
     password: str
 
 
+class ChangePassword(SQLModel):
+    old_password: str
+    new_password: str
+
+
 class UserRead(SQLModel):
     id: int
     username: str

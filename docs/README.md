@@ -462,3 +462,17 @@
 - **文档**：根 `README.md` 基本重写——技术栈(Vue3/Element Plus，迁移写实)、目录结构(补 scraper/、去 bot/React)、君丰→集运、状态段更新，新增**「全新机器部署」「生产/长期运行」「更新(git)」「备份」「默认账号/改密码」**五章。
 - **待用户拍板（未改）**：(1) 是否加「应用内改密码」接口（现只能首次用 `SOROBAN_ADMIN_PASS` 设、之后无改密入口）；(2) 是否开局域网(绑 0.0.0.0，开前必改密码)；(3) 是否引入 Alembic（当前加列式自动迁移够日常；结构性变更仍需手动+备份）。
 - 自测：后端语法/热重载/既有接口全 200、加列迁移模拟实测、前端 `vite build` 通过；`.env`/`*.db`/`.state`/`backups` 均 gitignore、无敏感文件入库。
+
+### 第三十八版：改密码接口/入口 + 端口避默认(8620/8621)
+按用户拍板落地两项：
+- **改密码**：新 `POST /api/auth/change-password`（校验原密码→hash 写回，需登录；原密码错→400、新密码<6 位→422）；前端侧栏底部加「改密码」弹窗（原/新/确认，失败给提示）。round-trip 实测通过（改→旧密码失效/新密码可登→错原密码 400→过短 422→复原 admin123）。补 `ChangePassword` schema、`authApi.changePassword`。
+- **端口避开默认**：后端 8000→**8620**、前端 5173→**8621**（避与其它项目/常见默认冲突），且**环境变量可覆盖**（`BACKEND_PORT`/`FRONTEND_PORT`，start.sh export、vite.config 读、plugins `_SELF_URL` 读、config CORS 默认同步、插件 .env.example 同步）。单一真源，改一处全跟随。README 端口引用全部更新。
+- ⚠️ 运行中的实例仍在旧端口，需**重跑 `./start.sh`** 才切到 8620/8621。
+
+### 第三十九版：引入 Alembic 迁移 + 复审修复
+用户要「加 Alembic + 再跑一次全项目审查」。
+- **Alembic 落地**：`backend/alembic/`（env.py 用 SQLModel.metadata + `render_as_batch=True`）+ baseline 迁移 `53b7e33debd0`（autogenerate 后加了 `import sqlmodel`；已验证与 `create_all` 建的 schema **逐字节一致**，含 3 个 `deleted_at IS NULL` 部分唯一索引）。`database.py::create_db_and_tables()` 改为跑 `alembic upgrade head`，并对 **pre-Alembic 旧库自动 stamp 到 baseline 再升级**（无缝接管、不重建表、数据不动）。requirements 加 `alembic`。全场景实测：全新空库建全 13 表+admin、旧库接管保数据、`alembic check` 干净、CLI 通。
+- **事故与恢复**：首轮复审有个 agent 擅自对**真实库**跑了 alembic 写命令，把 `alembic_version` 指向一个已删除的幻影版本 → 启动 `can't locate revision` 崩溃。已修：确认 schema 与 baseline 一致（数据完好 27 单/34 暂存）→ 重置 `alembic_version` 到真实 head → 启动恢复。并给复审加**只读铁律**（禁止对真实库/项目文件跑任何写/alembic 命令），重跑。
+- **复审 6 条已修**：(med 回归) env.py `fileConfig` 默认 `disable_existing_loggers=True` 会在 app 内跑迁移后禁掉 uvicorn/soroban 全部 logger → 传 `disable_existing_loggers=False`；(low) env.py 无条件覆盖 url 使 database.py 传入 url 失效 → 改成仅 ini 占位时才覆盖；(low 回归) 改密码失败双弹提示（拦截器已弹）→ 去掉 catch 里的重复 `ElMessage`；(low doc) `.env.example` CORS 示例端口 5173→8621。
+- **⚠️ 提交须知**：`backend/alembic/` 与 `backend/alembic.ini` 是新文件、必须 `git add` 一起提交，否则别的机器 clone/pull 后缺迁移脚本会启动失败。
+- 自测：日志回归修复验证（迁移后各 logger `disabled=False`）、`alembic check` 干净、TestClient 启动 200、前端 `vite build` 通过、数据完好。

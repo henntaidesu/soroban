@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     FX_QUOTE: str = "JPY"
     FX_REFRESH: int = 21600  # 6h；免费源约每日更新一次
 
-    # Frontend dev origin(s) for CORS.
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Frontend dev origin(s) for CORS（默认前端端口 8621；同源托管/vite 代理下其实用不到）。
+    CORS_ORIGINS: list[str] = ["http://localhost:8621", "http://127.0.0.1:8621"]
 
     # --- 爬虫插件目录（soroban 扫这里的 soroban-scraper-* 子目录作为插件）---
     # 默认 = soroban 仓库下的 scraper/；可用环境变量覆盖到别处。

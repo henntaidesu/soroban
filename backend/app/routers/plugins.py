@@ -32,7 +32,7 @@ router = APIRouter(
 )
 
 _SOROBAN_ROOT = Path(__file__).resolve().parents[3]     # …/soroban
-_SELF_URL = "http://127.0.0.1:8000"                     # soroban 自身地址（插件在同机，回灌用）
+_SELF_URL = f"http://127.0.0.1:{os.environ.get('BACKEND_PORT', '8620')}"   # soroban 自身地址（插件同机回灌用）
 
 
 def scraper_dir() -> Path:

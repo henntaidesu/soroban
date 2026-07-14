@@ -40,7 +40,10 @@
           <div class="user">
             <el-icon><User /></el-icon><span>{{ userName }}</span>
           </div>
-          <el-button size="small" text bg @click="logout">退出登录</el-button>
+          <div class="foot-btns">
+            <el-button size="small" text bg @click="pwd.open = true">改密码</el-button>
+            <el-button size="small" text bg @click="logout">退出登录</el-button>
+          </div>
         </div>
       </aside>
     </Teleport>
@@ -48,13 +51,26 @@
     <main class="content">
       <router-view />
     </main>
+
+    <el-dialog v-model="pwd.open" title="修改密码" width="360px" append-to-body @closed="resetPwd">
+      <el-form label-width="76px" @submit.prevent>
+        <el-form-item label="原密码"><el-input v-model="pwd.old" type="password" show-password /></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="pwd.neo" type="password" show-password placeholder="至少 6 位" /></el-form-item>
+        <el-form-item label="确认新密码"><el-input v-model="pwd.confirm" type="password" show-password @keyup.enter="submitPwd" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwd.open = false">取消</el-button>
+        <el-button type="primary" :loading="pwd.saving" @click="submitPwd">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { fxApi } from '@/api'
+import { ElMessage } from 'element-plus'
+import { authApi, fxApi } from '@/api'
 import { typeStyle } from '@/constants'
 
 const router = useRouter()
@@ -104,6 +120,24 @@ function logout() {
   localStorage.removeItem('auth_user')
   router.push('/login')
 }
+
+// —— 改密码 ——
+const pwd = reactive({ open: false, old: '', neo: '', confirm: '', saving: false })
+function resetPwd() { pwd.old = ''; pwd.neo = ''; pwd.confirm = ''; pwd.saving = false }
+async function submitPwd() {
+  if (pwd.neo.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (pwd.neo !== pwd.confirm) return ElMessage.warning('两次输入的新密码不一致')
+  pwd.saving = true
+  try {
+    await authApi.changePassword(pwd.old, pwd.neo)
+    ElMessage.success('密码已修改，下次登录用新密码')
+    pwd.open = false
+  } catch (_) {
+    /* 错误提示已由 http 拦截器统一弹出（含后端 detail，如"原密码不正确"），这里不再重复弹 */
+  } finally {
+    pwd.saving = false
+  }
+}
 </script>
 
 <style scoped>
@@ -128,6 +162,7 @@ function logout() {
 .foot { padding: 12px 16px; border-top: 1px solid #1c2740; display: flex; flex-direction: column; gap: 8px; }
 .fx { font-size: 13px; color: #9ba8bf; display: flex; align-items: center; gap: 6px; }
 .user { display: flex; align-items: center; gap: 6px; color: #c7d2e6; font-size: 13px; }
+.foot-btns { display: flex; gap: 8px; }
 .content { flex: 1; overflow: auto; padding: 20px; min-width: 0; }
 
 /* —— 手机抽屉：从左滑入 —— */

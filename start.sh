@@ -9,6 +9,11 @@ FRONTEND="$ROOT/frontend"
 PY_BIN="$BACKEND/.venv/bin/python"
 UVICORN_BIN="$BACKEND/.venv/bin/uvicorn"
 
+# 端口：避开常见默认(8000/5173)，防与其它项目冲突。可用环境变量覆盖，如 BACKEND_PORT=9620 ./start.sh
+BACKEND_PORT="${BACKEND_PORT:-8620}"
+FRONTEND_PORT="${FRONTEND_PORT:-8621}"
+export BACKEND_PORT FRONTEND_PORT   # vite.config 读这俩配端口/代理；后端读 BACKEND_PORT 拼插件回灌地址
+
 green() { printf "\033[32m%s\033[0m\n" "$1"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 red() { printf "\033[31m%s\033[0m\n" "$1"; }
@@ -59,17 +64,17 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-green "启动后端  → http://127.0.0.1:8000  (API 文档 /docs)"
-( cd "$BACKEND" && exec "$UVICORN_BIN" app.main:app --host 127.0.0.1 --port 8000 --reload ) &
+green "启动后端  → http://127.0.0.1:$BACKEND_PORT  (API 文档 /docs)"
+( cd "$BACKEND" && exec "$UVICORN_BIN" app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" --reload ) &
 BACK_PID=$!
 
-green "启动前端  → http://localhost:5173"
+green "启动前端  → http://localhost:$FRONTEND_PORT"
 ( cd "$FRONTEND" && exec npm run dev ) &
 FRONT_PID=$!
 
 echo
 green "soroban 已启动。默认账号 admin / admin123"
-green "浏览器打开 http://localhost:5173 ，Ctrl+C 停止全部。"
+green "浏览器打开 http://localhost:$FRONTEND_PORT ，Ctrl+C 停止全部。"
 echo
 
 wait

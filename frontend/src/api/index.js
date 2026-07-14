@@ -8,6 +8,8 @@ export const authApi = {
     return http.post('/auth/login', body)
   },
   me: () => http.get('/auth/me'),
+  changePassword: (old_password, new_password) =>
+    http.post('/auth/change-password', { old_password, new_password }),
 }
 
 export const taobaoApi = {

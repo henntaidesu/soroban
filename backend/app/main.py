@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
             "⚠️ SECRET_KEY 是不安全的默认值或过短，仅可用于本地开发。"
             "上公网前务必在 .env 设置强随机 SECRET_KEY，否则登录 token 可被伪造！"
         )
-    create_db_and_tables()          # MVP 阶段用 create_all；真数据前切 Alembic
+    create_db_and_tables()          # Alembic upgrade head（幂等；旧库自动接管，见 database.py）
     tasks = [asyncio.create_task(fx_loop()), asyncio.create_task(scheduler_loop())]
     try:
         yield

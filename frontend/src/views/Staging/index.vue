@@ -15,6 +15,9 @@
           <el-input v-model="filters.q" placeholder="搜订单号/商品" clearable style="width: 160px" @change="reload" />
         </template>
 
+        <template #cell-scraped_at="{ row }">
+          <span :class="row.scraped_at ? '' : 'ph'">{{ fmtDate(row.scraped_at) }}</span>
+        </template>
         <template #cell-items="{ row }">
           <span :class="row.items && row.items.length ? '' : 'ph'">{{ itemSummary(row) }}</span>
         </template>
@@ -63,7 +66,8 @@ import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 const columns = [
-  { key: 'order_date', label: '下单日期', type: 'date', width: 140 },
+  { key: 'scraped_at', label: '入库日期', readonly: true, width: 110 },   // 写进库的日期，方便按批次筛选
+  { key: 'order_date', label: '下单日期', type: 'date', width: 130 },     // 桌面版能取到，可人工改
   { key: 'order_no', label: '订单号', type: 'text', minWidth: 130, placeholder: '订单号' },
   { key: 'shop', label: '商品', type: 'text', minWidth: 110 },
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
@@ -85,6 +89,11 @@ const filters = reactive({ status: '', taobao_account: '', q: '' })
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
   return row.items.map((it) => `${it.name}×${it.quantity}`).join('，')
+}
+function fmtDate(s) {                         // 入库日期：后端存 UTC(naive)，补 Z 后按本地(JST)显示为 YYYY-MM-DD
+  if (!s) return '—'
+  const d = new Date(/[Z+]/.test(s) ? s : s + 'Z')
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 function ensureItems(row) {
   if (!row.items) row.items = []

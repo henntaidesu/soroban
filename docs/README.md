@@ -443,3 +443,13 @@
   - **(med) 已导入行只更状态**：`soroban_client` 对已导入行、当状态映射为 None 时会误 patch 整个 body 覆盖账本人工改值。改为已导入行**只**发 `order_status`（无则跳过），绝不回写其它字段。
   - **(low×7)**：数量容错 `int(float(str(q)))`（防单个坏值拖垮整批）；分页**按业务页码去重**（原按含时间戳 URL 去重会漏页）；token 改走**环境变量 `SOROBAN_TOKEN`** 下发（不进 `ps`/argv）；定时 `last_run_at` 仅**成功启动才推进**（空账号/失败不推进，下轮重试）；删 `cmd_fetch` 里永不触发的 `NotImplementedError` 死分支+误导注释；删 `config.ACCOUNTS` 死代码；`_PUSH_FIELDS` 的 `fx_rate` 补前向兼容注释。
 - 自测：离线解析 30 单字段全对；端到端回灌 15/20 单**幂等**（created→updated）；**实机 `python -m taobao_scraper fetch --account c2` 跑通**（真浏览器 ~50s、无风控、staging 落 20 单）；`_qty/_page_of/文件锁/已导入行 guard` 单测通过；后端 plugins.py 改后热重载、既有接口 200；前端 `vite build` 通过。个人数据（会话/抓包）全 gitignore。
+
+### 第三十六版：淘宝爬虫改用桌面网页版(拿到下单日期) + 入库日期列 + 增量抓取 + 二次审查修复
+按用户实测反馈调整（用户发现桌面版订单页直接显示下单日期/平台/订单号，H5 没有）：
+- **数据源 H5 → 桌面版**：同一接口 `queryboughtlistv2`，桌面版 `buyertrade.taobao.com` 返回 **PC 模板**，比 H5 多带 **下单日期**(`shopInfo.createDay/createTime`)、`canViewLogistics`(能否看物流)、干净分页(`pageSize:30/hasMore/totalNum`)。实测无风控。`fetch.py` 重写：桌面上下文(非 iPhone)、新 `parse_orders`(PC 模板：shopInfo/orderStatus/orderPayment/orderItemInfo/orderExt 组件)、状态取 `tradeTitle`(交易态)为准(orderStatus.title 是退款/退货子态会误导)。`normalize` 现产出 `order_date`。
+- **R1 入库日期列**：全部订单页「下单日期」列 → **入库日期**(`scraped_at`，只读，`#cell-scraped_at` slot + `fmtDate` 按 JST 显示)，方便按抓取批次筛选；下单日期仍存库、导入随行进账本。
+- **R2 增量抓取**：`cmd_fetch` 先取 soroban 已有订单号(`existing_order_nos`)，翻页时**整页都是已有订单就停手**不再往下翻（配合一页 30 单，通常只抓 1 页，绝不深翻）。
+- **R3 快递号**（待做）：只在详情/物流页、`canViewLogistics=true`(待收货)才有。计划：导入后定时任务**只对已导入且待收货的单**抓快递号（交易成功/关闭不抓）。当前账号无待收货单，需有一单再抓包定位字段。
+- **平台区分/闲鱼**：用户暂缓（闲鱼数据链路当前不通），本版不采集平台标记。
+- **二次对抗审查（2 agent）+ 修**：`cmd_fetch` 回灌段未包 try（token 过期/soroban 掉线会抛裸栈、soroban 收不到 JSON 结果行）→ 包住吐 `{ok:false}`；`unit_price` 未去「￥」→ 过 `_money`；翻页增量早停由「任一已见」改「整页已见」子集判定 + 点下一页后轮询新页真入列再读（防 expect_response 与 on_response 竞态）；首页响应改**轮询等待**(修 `pages[-1]` IndexError，实机首跑即命中已修)。
+- 自测：离线解析桌面页 30 单(下单日期全有、unit_price 去符号、状态取交易态)；端到端回灌幂等(created→updated)；**实机 `fetch --account c2` 跑通**(真桌面浏览器、无风控、增量停在第 1 页、staging 30 单)；后端热重载 200、前端 `vite build` 通过。

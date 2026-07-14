@@ -153,7 +153,7 @@ async function delRow(row) {
 
 function itemSummary(t) {
   if (!t.items || !t.items.length) return '—'
-  return t.items.map((i) => `${i.name}×${i.quantity}`).join('，')
+  return t.items.map((i) => `（${i.quantity}x）${i.name}`).join('，')
 }
 function tbSummary(row) {
   const list = row.taobao_orders || []

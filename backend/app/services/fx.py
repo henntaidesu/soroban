@@ -69,6 +69,16 @@ def current_rate(session: Session) -> Optional[Decimal]:
     return row.rate if row else None
 
 
+def rate_for_date(session: Session, d: Optional[dt.date]) -> Optional[Decimal]:
+    """按下单日期取汇率：优先用该日已记录的 FxRate；库里没有就退回最近一次记录的汇率
+    （即入库当天的当前汇率）——**只读库、不重新调 API**。"""
+    if d is not None:
+        row = session.exec(select(FxRate).where(FxRate.date == d)).first()
+        if row:
+            return row.rate
+    return current_rate(session)
+
+
 async def fx_loop() -> None:
     """Background refresh; keeps last-good on any error (hiyori pattern)."""
     while True:

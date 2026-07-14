@@ -65,18 +65,20 @@ import { stagingApi } from '@/api'
 import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
+// 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
+const COL_W = 110
 const columns = [
-  { key: 'scraped_at', label: '入库日期', readonly: true, width: 110 },   // 写进库的日期，方便按批次筛选
-  { key: 'order_date', label: '下单日期', type: 'date', width: 130 },     // 桌面版能取到，可人工改
-  { key: 'order_no', label: '订单号', type: 'text', minWidth: 130, placeholder: '订单号' },
-  { key: 'shop', label: '商品', type: 'text', minWidth: 110 },
-  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
-  { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天汇率' },
-  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
-  { key: 'express_no', label: '快递号', type: 'text', width: 110, placeholder: '快递号' },
-  { key: 'items', label: '物品', readonly: true, minWidth: 140, expand: true },
-  { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: 100 },
-  { key: 'status', label: '导入状态', readonly: true, width: 90 },
+  { key: 'order_date', label: '下单日期', type: 'date', width: COL_W },
+  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },   // 标题长：点开弹宽框看全
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
+  { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: COL_W },
+  { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
+  { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
+  { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
+  { key: 'scraped_at', label: '入库日期', readonly: true, width: COL_W },   // 写进库的日期，方便按批次筛选
+  { key: 'fx_rate', label: '汇率', type: 'decimal', width: COL_W, placeholder: '当天汇率' },
+  { key: 'status', label: '导入状态', readonly: true, width: COL_W },
 ]
 
 const rows = ref([])
@@ -88,7 +90,7 @@ const filters = reactive({ status: '', taobao_account: '', q: '' })
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
-  return row.items.map((it) => `${it.name}×${it.quantity}`).join('，')
+  return row.items.map((it) => `（${it.quantity}x）${it.name}`).join('，')
 }
 function fmtDate(s) {                         // 入库日期：后端存 UTC(naive)，补 Z 后按本地(JST)显示为 YYYY-MM-DD
   if (!s) return '—'

@@ -91,19 +91,21 @@ const today = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+// 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
+const COL_W = 110
 const columns = [
-  { key: 'date', label: '日期', type: 'date', width: 130 },
-  { key: 'order_no', label: '订单号', type: 'text', minWidth: 120, placeholder: '订单号' },
-  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: 110 },
-  { key: 'express_no', label: '快递号', type: 'text', width: 110, placeholder: '快递号' },
-  { key: 'shop', label: '商品', type: 'text', minWidth: 80 },
-  { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: 90, clearable: false },
-  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: 110, placeholder: '实付人民币' },
-  { key: 'fx_rate', label: '汇率', type: 'decimal', width: 80, placeholder: '当天汇率' },
-  { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
-  { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 110 },
-  { key: 'shipment_order_id', label: '集运订单', readonly: true, width: 176, placeholder: '选择' },
-  { key: 'items', label: '物品', readonly: true, minWidth: 110, expand: true },
+  { key: 'date', label: '日期', type: 'date', width: COL_W },
+  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
+  { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
+  { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: COL_W, clearable: false },
+  { key: 'shipment_order_id', label: '集运订单', readonly: true, width: COL_W, placeholder: '选择' },
+  { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: COL_W },
+  { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: COL_W, placeholder: '实付日元' },
+  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
+  { key: 'fx_rate', label: '汇率', type: 'decimal', width: COL_W, placeholder: '当天汇率' },
+  { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
+  { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
 ]
 
 const rows = ref([])
@@ -127,7 +129,7 @@ function onPickShipment(row, v) {   // -1 = 列表里的「清除」项；其余
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
-  return row.items.map((it) => `${it.name}×${it.quantity}`).join('，')
+  return row.items.map((it) => `（${it.quantity}x）${it.name}`).join('，')
 }
 function ensureItems(row) {
   if (!row.items) row.items = []

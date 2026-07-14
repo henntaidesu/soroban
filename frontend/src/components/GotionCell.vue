@@ -33,6 +33,23 @@
     </template>
   </div>
 
+  <!-- long：长文本(如商品标题) → 点开弹出宽 textarea，看得全、可编辑；悬停有 tooltip -->
+  <el-popover v-else-if="col.long" :visible="editing" :width="380" :offset="4"
+              placement="bottom-start" @update:visible="(v) => !v && commit()">
+    <template #reference>
+      <el-tooltip :content="disp || ''" :disabled="editing || disp === null"
+                  :show-after="0" placement="top" popper-class="gtn-tip">
+        <div class="gtn-disp" @click="!editing && start()">
+          <span v-if="disp !== null">{{ disp }}</span>
+          <span v-else class="ph">{{ emptyText }}</span>
+        </div>
+      </el-tooltip>
+    </template>
+    <!-- 只有点击弹窗外面才关闭并保存(commit 仅在值有变化时才 emit，未改不发 PATCH)；Esc 取消不保存。 -->
+    <el-input ref="inp" v-model="editVal" type="textarea" class="gtn-long-in"
+              :autosize="{ minRows: 2, maxRows: 8 }" @keydown.esc="close" />
+  </el-popover>
+
   <!-- text / decimal / int -->
   <div v-else class="gtn-disp" @click="!editing && start()">
     <el-input-number v-if="editing && col.type === 'int'" ref="inp" v-model="editVal" :controls="false"
@@ -130,9 +147,27 @@ function choose(o) {
 .gtn-opt.clear { color: #9ba8bf; font-size: 12px; border-top: 1px solid #28354a; }
 .gtn-opt.clear:hover { color: #f56c6c; }
 
+/* 长文本弹窗编辑：宽 textarea，失焦自动保存 */
+.gtn-long-in { width: 100% !important; }
+.gtn-long-in :deep(.el-textarea__inner) { font-size: 13px; }
+
 /* 无边框内嵌输入，像直接在格子里打字（对冲全局 .el-input{width:180px}） */
 .gtn-in { width: 100% !important; }
 .gtn-in :deep(.el-input__wrapper),
 .gtn-in :deep(.el-input-number) { box-shadow: none !important; background: transparent; width: 100% !important; }
 .gtn-in :deep(.el-input__inner) { height: 34px; font-size: 13px; color: inherit; text-align: left; }
+</style>
+
+<!-- 非 scoped：tooltip 传送到 body，需全局样式；配色对齐暗色主题 -->
+<style>
+.gtn-tip.el-popper {
+  background: #18233a !important;
+  border: 1px solid #28354a !important;
+  color: #e6edf7 !important;
+  max-width: 360px;
+}
+.gtn-tip.el-popper .el-popper__arrow::before {
+  background: #18233a !important;
+  border: 1px solid #28354a !important;
+}
 </style>

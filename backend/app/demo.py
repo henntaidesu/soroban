@@ -5,6 +5,7 @@
 """
 
 import datetime as dt
+import json
 from decimal import Decimal
 
 from sqlmodel import Session, select
@@ -12,8 +13,18 @@ from sqlmodel import Session, select
 from .auth import hash_password
 from .database import create_db_and_tables, engine
 from .models import (
-    FxRate, ShipmentOrder, MiscExpense, OrderItem, StagingItem, TagOption, TaobaoOrder, TaobaoStaging, User,
+    ColumnLayout, FxRate, ShipmentOrder, MiscExpense, OrderItem, StagingItem, TagOption,
+    TaobaoOrder, TaobaoStaging, User,
 )
+
+# 列布局默认：顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）。demo 注入库，reset 后即此默认序。
+COL_W = 110
+COL_LAYOUTS = {
+    "staging": ["order_date", "taobao_account", "shop", "price_cny", "order_status",
+                "items", "order_no", "express_no", "scraped_at", "fx_rate", "status"],
+    "taobao": ["date", "taobao_account", "shop", "items", "status", "shipment_order_id",
+               "jpy_settled", "jpy_override", "price_cny", "fx_rate", "express_no", "order_no"],
+}
 
 D = lambda y, m, d: dt.date(y, m, d)  # noqa: E731
 
@@ -133,8 +144,15 @@ def main() -> None:
             row.items = [StagingItem(name=n, quantity=q) for n, q in items]
             s.add(row)
 
+        # —— 列布局默认（顺序 + 统一列宽）——
+        for _t, _keys in COL_LAYOUTS.items():
+            s.add(ColumnLayout(
+                table_name=_t,
+                columns_json=json.dumps([{"key": k, "width": COL_W} for k in _keys], ensure_ascii=False),
+            ))
+
         s.commit()
-        print("演示数据已灌入：3 集运 / 9 淘宝 / 4 杂项 / 4 暂存待导入。")
+        print("演示数据已灌入：3 集运 / 9 淘宝 / 4 杂项 / 4 暂存待导入 / 2 列布局。")
 
 
 if __name__ == "__main__":

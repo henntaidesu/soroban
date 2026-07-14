@@ -100,11 +100,11 @@ def list_staging(
 
 @router.post("", response_model=StagingRead)
 def create_staging(payload: StagingCreate, session: Session = Depends(get_session)):
-    from ..services.fx import current_rate  # 局部导入避免循环
+    from ..services.fx import rate_for_date  # 局部导入避免循环
 
     row = TaobaoStaging(**payload.model_dump(exclude={"items"}))
-    if row.fx_rate is None:                  # 新建/抓取时记当天汇率
-        row.fx_rate = current_rate(session)
+    if row.fx_rate is None:                  # 按下单日期匹配汇率；无记录则退回当前(入库当天)汇率
+        row.fx_rate = rate_for_date(session, row.order_date)
     row.items = [StagingItem(name=it.name, quantity=it.quantity) for it in payload.items]
     session.add(row)
     session.commit()
@@ -188,7 +188,7 @@ def ignore_staging(row_id: int, session: Session = Depends(get_session)):
 @router.post("/{row_id}/import", response_model=TaobaoRead)
 def import_staging(row_id: int, session: Session = Depends(get_session)):
     """从暂存行生成正式淘宝订单（含全部物品），并标记暂存为已导入。"""
-    from ..services.fx import current_rate  # 局部导入避免循环
+    from ..services.fx import rate_for_date  # 局部导入避免循环
 
     row = session.get(TaobaoStaging, row_id)
     if not row:
@@ -203,7 +203,7 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         taobao_account=row.taobao_account,
         express_no=row.express_no,
         price_cny=row.price_cny,
-        fx_rate=row.fx_rate or current_rate(session),   # 优先用暂存记录的当天汇率，一同迁移
+        fx_rate=row.fx_rate or rate_for_date(session, row.order_date),  # 优先暂存记录的汇率；否则按下单日期匹配
         status=row.order_status or TaobaoStatus.paid.value,   # 订单状态一同迁移
         source=Source.imported.value,
     )

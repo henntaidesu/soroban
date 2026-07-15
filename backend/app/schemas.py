@@ -114,6 +114,7 @@ class TaobaoBase(MoneyIn):
     url: Optional[str] = None
     category: Optional[str] = None
     status: str = TaobaoStatus.paid.value
+    platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
     taobao_account: Optional[str] = None
@@ -139,6 +140,7 @@ class TaobaoUpdate(MoneyIn):
     url: Optional[str] = None
     category: Optional[str] = None
     status: Optional[str] = None
+    platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
     taobao_account: Optional[str] = None
@@ -161,6 +163,7 @@ class TaobaoRead(MoneyOut):
     url: Optional[str] = None
     category: Optional[str] = None
     status: str
+    platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
     taobao_account: Optional[str] = None

@@ -48,7 +48,7 @@ def _linked_order(session: Session, row: TaobaoStaging) -> Optional[TaobaoOrder]
     if row.imported_taobao_order_id is None:
         return None
     order = session.get(TaobaoOrder, row.imported_taobao_order_id)
-    return order if order and order.deleted_at is None else None
+    return order if order and not order.is_delete else None
 
 
 def _read(session: Session, row: TaobaoStaging) -> StagingRead:

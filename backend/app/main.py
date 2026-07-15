@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -11,8 +12,8 @@ from sqlalchemy.exc import IntegrityError
 
 from . import models  # noqa: F401  确保建表前所有模型已注册
 from .config import settings
-from .database import create_db_and_tables
-from .routers import auth, dashboard, fx, shipment, layout, misc, plugins, staging, tags, taobao
+from .database import checkpoint_and_dispose, create_db_and_tables, wal_checkpoint_loop
+from .routers import auth, dashboard, dbadmin, fx, shipment, layout, misc, plugins, staging, tags, taobao
 from .routers.plugins import scheduler_loop
 from .services.fx import fx_loop
 
@@ -30,12 +31,18 @@ async def lifespan(app: FastAPI):
             "上公网前务必在 .env 设置强随机 SECRET_KEY，否则登录 token 可被伪造！"
         )
     create_db_and_tables()          # Alembic upgrade head（幂等；旧库自动接管，见 database.py）
-    tasks = [asyncio.create_task(fx_loop()), asyncio.create_task(scheduler_loop())]
+    tasks = [
+        asyncio.create_task(fx_loop()),
+        asyncio.create_task(scheduler_loop()),
+        # 控制引擎恒为 SQLite（存 app_db_config），故 WAL 截断循环始终运行
+        asyncio.create_task(wal_checkpoint_loop(600)),   # 每 10 分钟截断一次 WAL
+    ]
     try:
         yield
     finally:
         for t in tasks:
             t.cancel()
+        checkpoint_and_dispose()        # 合并并截断 WAL、关连接池 → 回收 -wal/-shm
 
 
 app = FastAPI(title="soroban", version="0.1.0", lifespan=lifespan)
@@ -52,6 +59,7 @@ app.add_middleware(
 for r in (
     auth.router, taobao.router, shipment.router, misc.router,
     staging.router, dashboard.router, fx.router, layout.router, tags.router, plugins.router,
+    dbadmin.router,
 ):
     app.include_router(r)
 
@@ -78,7 +86,12 @@ def health():
 from pathlib import Path  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# 打包后前端 frontend/dist 打入 _MEIPASS；源码运行时取仓库里的 frontend/dist。
+_DIST = (
+    Path(sys._MEIPASS) / "frontend" / "dist"        # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[2] / "frontend" / "dist"
+)
 if _DIST.is_dir():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
     log.info("已挂载前端静态文件（生产同源托管）：%s", _DIST)

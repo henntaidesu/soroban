@@ -24,8 +24,8 @@ def guarded_bump(session: Session, model, obj_id: int, expected_version: int) ->
     返回 False 表示版本已变（并发/交错写），调用方应抛 409。此 UPDATE 与后续的字段改动
     在同一事务提交，保证并发下不会丢失更新。"""
     conds = [model.id == obj_id, model.version == expected_version]
-    if hasattr(model, "deleted_at"):                    # 暂存表用硬删、无 deleted_at 列，跳过该条件
-        conds.append(model.deleted_at.is_(None))
+    if hasattr(model, "is_delete"):                     # 暂存表用硬删、无 is_delete 列，跳过该条件
+        conds.append(model.is_delete.is_(False))
     res = session.execute(
         sa_update(model).where(*conds).values(version=model.version + 1, updated_at=utcnow())
     )
@@ -33,4 +33,4 @@ def guarded_bump(session: Session, model, obj_id: int, expected_version: int) ->
 
 
 def soft_delete(obj) -> None:
-    obj.deleted_at = utcnow()
+    obj.is_delete = True

@@ -1,9 +1,16 @@
 <template>
   <div>
     <el-card>
-      <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable :open-id="focusId"
+      <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable hide-id :open-id="focusId"
                    table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
+          <el-upload ref="ocrUpload" class="ocr-up" multiple :show-file-list="false" :auto-upload="false"
+                     accept="image/*" :on-change="onOcrPick">
+            <div class="ocr-drop" :class="{ busy: ocrPending }">
+              <el-icon class="ocr-ic"><Camera /></el-icon>
+              <span>{{ ocrPending ? `后台识别中 ${ocrPending} 张…` : '点击选图 OCR识别（或拖图到页面）' }}</span>
+            </div>
+          </el-upload>
           <el-tag v-if="focusId" type="warning" closable disable-transitions class="focus-chip" @close="clearFocus">
             定位订单 #{{ focusId }} · 点 × 看全部
           </el-tag>
@@ -82,16 +89,28 @@
       <el-pagination class="pager" layout="prev, pager, next, total" :total="total"
                      :page-size="pageSize" :current-page="page" @current-change="onPage" />
     </el-card>
+
+    <!-- 整窗拖拽：把图片拖到浏览器任意位置即在中间浮出上传框，松手识别（支持多张）。
+         pointer-events:none 不拦截拖拽，drop 交给 window 监听统一处理，避免与工具栏重复触发。 -->
+    <Teleport to="body">
+      <div v-if="dragActive" class="ocr-overlay">
+        <div class="ocr-overlay-box">
+          <el-icon class="ocr-overlay-ic"><Camera /></el-icon>
+          <div class="ocr-overlay-title">松开鼠标，识别截图（OCR）</div>
+          <div class="ocr-overlay-sub">支持一次拖入多张 · 自动填单</div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete } from '@element-plus/icons-vue'
+import { Camera, Check, Delete } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
-import { TAOBAO_STATUS, statusStyle } from '@/constants'
+import { ORDER_SOURCES, TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -106,6 +125,7 @@ const COL_W = 110
 const columns = [
   { key: 'date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: COL_W, clearable: false },
@@ -114,6 +134,7 @@ const columns = [
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: COL_W, placeholder: '实付日元' },
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: COL_W, placeholder: '当天汇率' },
+  { key: 'express_company', label: '快递公司', type: 'text', width: COL_W, placeholder: '快递公司' },
   { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
   { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
 ]
@@ -215,14 +236,184 @@ async function commitDraft(row) {
   await saveItems(row)
 }
 
+// OCR 识别订单截图：抽取快递公司/快递号/订单号/成交价，识别到就新建一行并回填。
+// 后台并发：每张图各起一次请求、互不阻塞，识别中前端可继续拖入更多图；ocrPending 记在飞的张数。
+// 后台串行队列：拖入/选择的图片进队列，逐张识别。为何串行而非并发——
+// ① 后端 OCR 本就用锁串行，前端并发并不提速；② 浏览器每域名仅 ~6 个连接，一次性发出
+// 多个「慢 OCR」请求会占满连接、把随后的建单请求挤到超时 → 表现为「后续中断」。
+// 串行 + 每张独立 try/catch：单张失败或「订单号+来源」重复都只跳过该张，绝不打断后续。
+// 处理期间可继续拖入，新图追加到队列末尾。
+const ocrPending = ref(0)   // 队列中待处理 + 处理中的总张数（用于提示与状态）
+const ocrUpload = ref(null)
+const ocrQueue = []
+let ocrRunning = false
+const dragActive = ref(false)   // 整窗拖拽中：中间浮出上传框
+let dragDepth = 0               // dragenter/leave 会因子元素冒泡多次触发，用计数判断是否真正离开窗口
+
+function onOcrPick(uploadFile) { enqueueOcr(uploadFile?.raw ? [uploadFile.raw] : []) }   // el-upload 点选/多选
+
+function enqueueOcr(files) {
+  const imgs = files.filter((f) => f && (!f.type || f.type.startsWith('image/')))
+  const skipped = files.length - imgs.length
+  if (skipped) ElMessage.warning(`已跳过 ${skipped} 个非图片文件`)   // 拖拽不受 accept 约束
+  if (!imgs.length) return
+  ocrQueue.push(...imgs)
+  ocrPending.value += imgs.length
+  pumpOcr()
+}
+
+async function pumpOcr() {
+  if (ocrRunning) return          // 已有 worker 在跑；新入队的图会被同一循环取走
+  ocrRunning = true
+  try {
+    while (ocrQueue.length) {
+      const file = ocrQueue.shift()
+      try {
+        await processOcr(file)    // 单张：识别 → 建行；内部已吞错，任何失败都不中断队列
+      } finally {
+        ocrPending.value--
+      }
+    }
+  } finally {
+    ocrRunning = false
+    ocrUpload.value?.clearFiles?.()   // 队列排空后清 el-upload 内部列表，便于重复选同一张图
+  }
+}
+
+async function processOcr(file) {
+  try {
+    const res = await taobaoApi.ocr(file)
+    if (res.reject_reason) {   // 拿错平台截图（淘宝/京东）→ 提示改用爬虫，不建单
+      ElMessage.warning(`「${file.name}」${res.reject_reason}`)
+      return
+    }
+    const data = {}
+    if (res.order_date) data.date = res.order_date          // 下单时间 → 下单日期
+    if (res.platform) data.platform = res.platform
+    if (res.product) data.shop = res.product                // 商品名称 →「商品」列(shop)
+    if (res.express_company) data.express_company = res.express_company
+    if (res.express_no) data.express_no = res.express_no
+    if (res.order_no) data.order_no = res.order_no
+    if (res.price_cny != null && res.price_cny !== '') data.price_cny = res.price_cny
+    if (res.status) data.status = res.status                // 有快递单号→待收货，否则待发货
+    // status/platform 恒有值，故按「实质字段」判断是否真识别到内容
+    const recognized = res.order_no || res.express_no || res.order_date || res.product ||
+      (res.price_cny != null && res.price_cny !== '')
+    if (!recognized) {
+      ElMessage.warning(`未能从「${file.name}」识别到快递/订单信息，请手动填写`)
+      return
+    }
+    // 通过订单号匹配已存在订单：命中→更新（回填下单时间、补齐缺失字段），否则新建。
+    // 支持「同一单先后拍多张截图（物流页/详情页）」逐步补全同一行，而非重复建行。
+    if (data.order_no) {
+      const existing = await findByOrderNo(data.order_no)
+      if (existing) { await mergeByOrderNo(existing, data); return }
+    }
+    const created = await addRow(data)
+    if (!created) return   // 新建失败（如订单号+来源重复），addRow 已给提示，不再报成功
+    ElMessage.success(`已识别并新建订单 · ${ocrSummary(data)}`)
+  } catch (_) {
+    // 依赖未装(503)/图片错误(400)/超时 等由 http 拦截器统一提示；不抛出，避免中断队列
+  }
+}
+
+// 按订单号精确查已存在订单（q 为包含匹配，这里取完全相等的一条；软删行后端已过滤）
+async function findByOrderNo(orderNo) {
+  try {
+    const res = await taobaoApi.list({ q: orderNo, limit: 20 })
+    return res.items.find((r) => r.order_no === orderNo) || null
+  } catch (_) { return null }
+}
+
+// 交易状态生命周期序：只准前进（待付款→待发货→待收货→交易成功），不回退；终态/未知取 -1
+const STATUS_RANK = { 待付款: 0, 待发货: 1, 待收货: 2, 交易成功: 3 }
+function statusRank(s) { return STATUS_RANK[s] ?? -1 }
+
+// 命中同订单号：下单时间总是回填；状态仅「推进」时更新（如补上快递单号→待收货）；
+// 其余字段仅在原值为空时补齐（不覆盖已有数据）
+async function mergeByOrderNo(existing, data) {
+  const patch = { version: existing.version }
+  if (data.date) patch.date = data.date
+  if (data.status && statusRank(data.status) > statusRank(existing.status)) patch.status = data.status
+  for (const k of ['platform', 'shop', 'express_company', 'express_no', 'price_cny']) {
+    const cur = existing[k]
+    if (data[k] != null && data[k] !== '' && (cur == null || cur === '')) patch[k] = data[k]
+  }
+  if (Object.keys(patch).length <= 1) {   // 只有 version → 无新增信息
+    ElMessage.info(`订单号 ${data.order_no} 已存在，无新增信息`)
+    return
+  }
+  try {
+    const updated = await taobaoApi.update(existing.id, patch)
+    const idx = rows.value.findIndex((r) => r.id === existing.id)   // 在当前页则就地刷新
+    if (idx >= 0) { const { items, ...rest } = updated; Object.assign(rows.value[idx], rest); sortRows() }
+    ElMessage.success(`已按订单号匹配更新 · 订单号 ${data.order_no}${patch.date ? ' · 下单时间 ' + patch.date : ''}`)
+  } catch (e) {
+    if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
+  }
+}
+
+function ocrSummary(data) {
+  const parts = []
+  if (data.date) parts.push(`下单 ${data.date}`)
+  if (data.status) parts.push(`状态 ${data.status}`)
+  if (data.platform) parts.push(`来源 ${data.platform}`)
+  if (data.shop) parts.push(`商品 ${data.shop}`)
+  if (data.express_company) parts.push(`快递 ${data.express_company}`)
+  if (data.express_no) parts.push(`快递号 ${data.express_no}`)
+  if (data.order_no) parts.push(`订单号 ${data.order_no}`)
+  if (data.price_cny) parts.push(`成交价 ¥${data.price_cny}`)
+  return parts.join(' · ')
+}
+
+// —— 整窗拖拽上传：拖图进浏览器任意位置 → 中间浮出上传框，松手识别 ——
+function isFileDrag(e) {
+  return !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')
+}
+function onWinDragEnter(e) {
+  if (!isFileDrag(e)) return
+  e.preventDefault(); dragDepth++; dragActive.value = true
+}
+function onWinDragOver(e) {
+  if (!isFileDrag(e)) return
+  e.preventDefault()                       // 必须 preventDefault，否则不触发 drop
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+function onWinDragLeave(e) {
+  if (!isFileDrag(e)) return
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragActive.value = false
+}
+function onWinDrop(e) {
+  if (!isFileDrag(e)) return
+  e.preventDefault(); dragDepth = 0; dragActive.value = false
+  enqueueOcr(Array.from(e.dataTransfer.files || []))   // 多张入队，后台逐张识别
+}
+
+// 保持当前页按「下单日期」降序（与后端 order_by 一致）；新建/改期后即时重排，避免 unshift 打乱顺序
+function sortRows() {
+  rows.value.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id))
+}
+
 async function addRow(data = {}) {
   try {
     // status 不写死：后端 TaobaoBase 默认「待发货」，避免枚举改名后前端残留非法值（曾用'已付'→422）
     const created = await taobaoApi.create({ date: today(), ...data })
     rows.value.unshift(created)
+    sortRows()                 // 按下单日期归位（OCR 可能录入历史日期，勿留在顶部）
     ensureDraft(created.id)
     total.value++
-  } catch (_) { /* 拦截器已提示 */ }
+    return created
+  } catch (e) {
+    // 409 被 http 拦截器刻意跳过（留给页面处理）→ 这里对「订单号+来源」重复给明确提示
+    if (e.response?.status === 409) {
+      const who = data.order_no
+        ? `订单号「${data.order_no}」${data.platform ? '·' + data.platform : ''}`
+        : '该记录'
+      ElMessage.warning(`${who} 已存在（订单号+来源需唯一），未添加`)
+    }
+    return null   // 其余错误由拦截器提示；统一返回 null 让调用方知道未新建
+  }
 }
 
 async function delRow(row) {
@@ -249,11 +440,49 @@ watch(() => route.query.focus, (v) => {
 }, { immediate: true })
 function clearFocus() { router.replace({ path: '/taobao', query: {} }) }
 
-onMounted(() => { loadShipment() })
+onMounted(() => {
+  loadShipment()
+  window.addEventListener('dragenter', onWinDragEnter)
+  window.addEventListener('dragover', onWinDragOver)
+  window.addEventListener('dragleave', onWinDragLeave)
+  window.addEventListener('drop', onWinDrop)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('dragenter', onWinDragEnter)
+  window.removeEventListener('dragover', onWinDragOver)
+  window.removeEventListener('dragleave', onWinDragLeave)
+  window.removeEventListener('drop', onWinDrop)
+})
 </script>
 
 <style scoped>
 .pager { margin-top: 12px; justify-content: flex-end; }
+/* OCR 上传：工具栏里的点选按钮（拖拽走整窗覆盖层，这里只负责点击选图）。 */
+.ocr-up { display: inline-flex; }
+.ocr-up :deep(.el-upload) { display: inline-flex; }
+.ocr-drop {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px;
+  border: 1px dashed #3a4a6b; border-radius: 4px; color: #7f9cff; font-size: 13px;
+  white-space: nowrap; cursor: pointer;
+}
+.ocr-drop:hover { border-color: #409eff; background: rgba(64, 158, 255, 0.08); }
+.ocr-drop.busy { color: #7d8aa3; }
+.ocr-ic { font-size: 15px; }
+
+/* 整窗拖拽覆盖层：居中的上传提示框，不拦截拖拽事件 */
+.ocr-overlay {
+  position: fixed; inset: 0; z-index: 9000; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 12, 24, 0.72);
+}
+.ocr-overlay-box {
+  width: min(460px, 76vw); padding: 40px 32px; text-align: center;
+  border: 2px dashed #409eff; border-radius: 16px;
+  background: rgba(16, 25, 44, 0.92); box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+}
+.ocr-overlay-ic { font-size: 44px; color: #6ea8ff; margin-bottom: 12px; }
+.ocr-overlay-title { font-size: 18px; font-weight: 600; color: #eaf1ff; }
+.ocr-overlay-sub { margin-top: 6px; font-size: 13px; color: #8a9ab8; }
 .focus-chip { font-weight: 500; }
 .focus-empty { color: #9ba8bf; font-size: 13px; padding: 16px; text-align: center; }
 .ph { color: #5b6880; }

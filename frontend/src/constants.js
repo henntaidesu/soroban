@@ -3,11 +3,13 @@
 export const TAOBAO_STATUS = ['待付款', '待发货', '待收货', '交易成功', '退款', '交易关闭']
 export const SHIPMENT_STATUS = ['打包中', '已发出', '已签收', '已取消']
 export const STAGING_STATUS = ['待处理', '已导入', '已忽略']   // 暂存导入工作流状态
+export const ORDER_SOURCES = ['闲鱼', '淘宝', '京东']          // 订单来源平台（OCR 可自动识别）
 
 function statusTagType(s) {   // 内部用：语义色映射，对外走 statusStyle
   return {
     待付款: 'info', 待发货: 'primary', 待收货: 'warning', 交易成功: 'success', 退款: 'danger', 交易关闭: 'info',
     打包中: 'warning', 已发出: 'primary', 已签收: 'success', 已取消: 'info',
+    闲鱼: 'warning', 淘宝: 'primary', 京东: 'danger',
   }[s] || 'info'
 }
 

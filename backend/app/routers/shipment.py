@@ -27,7 +27,7 @@ def _read(session: Session, order: ShipmentOrder) -> ShipmentRead:
         select(TaobaoOrder)
         .where(
             TaobaoOrder.shipment_order_id == order.id,
-            TaobaoOrder.deleted_at.is_(None),
+            TaobaoOrder.is_delete.is_(False),
         )
         .options(selectinload(TaobaoOrder.items))   # 批量载入子订单物品，避免 N+1
     ).all()
@@ -50,7 +50,7 @@ def list_orders(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    conds = [ShipmentOrder.deleted_at.is_(None)]
+    conds = [ShipmentOrder.is_delete.is_(False)]
     if date_from:
         conds.append(ShipmentOrder.date >= date_from)
     if date_to:
@@ -88,7 +88,7 @@ def create_order(payload: ShipmentCreate, session: Session = Depends(get_session
 @router.get("/{order_id}", response_model=ShipmentRead)
 def get_order(order_id: int, session: Session = Depends(get_session)):
     order = session.get(ShipmentOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("集运订单")
     return _read(session, order)
 
@@ -96,7 +96,7 @@ def get_order(order_id: int, session: Session = Depends(get_session)):
 @router.patch("/{order_id}", response_model=ShipmentRead)
 def update_order(order_id: int, payload: ShipmentUpdate, session: Session = Depends(get_session)):
     order = session.get(ShipmentOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("集运订单")
     if not guarded_bump(session, ShipmentOrder, order_id, payload.version):
         conflict()
@@ -117,10 +117,10 @@ def attach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_s
     """把一个淘宝订单挂到本集运单（点选添加）。同一个外键 shipment_order_id，与淘宝页共用。
     仅允许「未挂靠」的淘宝单：已挂在别的集运单 → 422（先移除再加，防误抢）。"""
     shipment = session.get(ShipmentOrder, shipment_id)
-    if not shipment or shipment.deleted_at is not None:
+    if not shipment or shipment.is_delete:
         not_found("集运订单")
     tb = session.get(TaobaoOrder, tb_id)
-    if not tb or tb.deleted_at is not None:
+    if not tb or tb.is_delete:
         not_found("淘宝订单")
     if tb.shipment_order_id == shipment_id:
         return _read(session, shipment)               # 已挂本单，幂等
@@ -132,9 +132,9 @@ def attach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_s
         .where(
             TaobaoOrder.id == tb_id,
             TaobaoOrder.shipment_order_id.is_(None),
-            TaobaoOrder.deleted_at.is_(None),
+            TaobaoOrder.is_delete.is_(False),
             select(ShipmentOrder.id)
-            .where(ShipmentOrder.id == shipment_id, ShipmentOrder.deleted_at.is_(None))
+            .where(ShipmentOrder.id == shipment_id, ShipmentOrder.is_delete.is_(False))
             .exists(),
         )
         .values(shipment_order_id=shipment_id, version=TaobaoOrder.version + 1, updated_at=utcnow())
@@ -149,10 +149,10 @@ def attach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_s
 def detach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_session)):
     """从本集运单移除一个淘宝订单（解除外键）。仅当它确实挂在本单才动（幂等）。"""
     shipment = session.get(ShipmentOrder, shipment_id)
-    if not shipment or shipment.deleted_at is not None:
+    if not shipment or shipment.is_delete:
         not_found("集运订单")
     tb = session.get(TaobaoOrder, tb_id)
-    if not tb or tb.deleted_at is not None:
+    if not tb or tb.is_delete:
         not_found("淘宝订单")
     # 原子解除：仅当它确实挂在本单才动（幂等）；version 在 DB 层自增，不丢并发自增。
     session.execute(
@@ -167,12 +167,12 @@ def detach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_s
 @router.delete("/{order_id}")
 def delete_order(order_id: int, session: Session = Depends(get_session)):
     order = session.get(ShipmentOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("集运订单")
     # 解除关联淘宝订单的挂靠，避免留下指向已删集运单的悬空外键
     session.execute(
         sa_update(TaobaoOrder)
-        .where(TaobaoOrder.shipment_order_id == order_id, TaobaoOrder.deleted_at.is_(None))
+        .where(TaobaoOrder.shipment_order_id == order_id, TaobaoOrder.is_delete.is_(False))
         .values(shipment_order_id=None, version=TaobaoOrder.version + 1, updated_at=utcnow())
     )
     soft_delete(order)

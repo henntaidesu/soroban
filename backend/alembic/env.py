@@ -1,5 +1,6 @@
 """Alembic 环境：用本项目的 SQLModel.metadata 做 autogenerate，URL 取自 app.config。
-SQLite 用 render_as_batch=True（否则 ALTER 受限、改列/约束会失败）。"""
+render_as_batch 仅 SQLite 开（其「建新表拷贝」批处理是 SQLite ALTER 受限的绕行；
+MySQL 支持直接 ALTER，开 batch 反而多余、且会干扰生成列等 MySQL 专属 DDL）。"""
 
 import sys
 from logging.config import fileConfig
@@ -18,7 +19,9 @@ config = context.config
 # 只在 ini 的 url 仍是占位符时才用 settings 覆盖——这样 database.py 程序内传入的真实 url（及 CLI -x）能生效
 _ini_url = config.get_main_option("sqlalchemy.url")
 if not _ini_url or _ini_url.startswith("driver://"):
-    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    # alembic 的 Config 底层是 ConfigParser，% 会被当成插值语法（MySQL 密码里的 %40 会炸）；
+    # 写入时转义 %→%%，get_section 读回时插值会还原成真实 URL。
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 if config.config_file_name is not None:
     # disable_existing_loggers=False：在 app 进程内跑迁移时别把 uvicorn/soroban 等宿主 logger 禁掉（否则启动后日志静默）
     fileConfig(config.config_file_name, disable_existing_loggers=False)
@@ -32,7 +35,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,
+        render_as_batch=settings.DATABASE_URL.startswith("sqlite"),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -48,7 +51,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            render_as_batch=True,       # SQLite 关键：改列/约束走「建新表拷贝」批处理
+            render_as_batch=connection.dialect.name == "sqlite",  # SQLite 才需「建新表拷贝」批处理；MySQL 直接 ALTER
             compare_type=True,
         )
         with context.begin_transaction():

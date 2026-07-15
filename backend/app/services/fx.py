@@ -12,7 +12,7 @@ import httpx
 from sqlmodel import Session, col, select
 
 from ..config import settings
-from ..database import engine
+from ..database import get_engine
 from ..models import FxRate, utcnow
 
 log = logging.getLogger("soroban.fx")
@@ -83,7 +83,7 @@ async def fx_loop() -> None:
     """Background refresh; keeps last-good on any error (hiyori pattern)."""
     while True:
         try:
-            with Session(engine) as session:
+            with Session(get_engine()) as session:
                 await refresh_and_store(session)
         except Exception as e:
             log.warning("汇率刷新循环异常: %s", e)

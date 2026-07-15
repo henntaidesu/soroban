@@ -12,6 +12,7 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Optional
@@ -21,7 +22,7 @@ from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_user
 from ..config import settings
-from ..database import engine, get_session
+from ..database import get_engine, get_session
 from ..models import PluginConfig, User, utcnow
 from ..schemas import PluginConfigIn
 
@@ -31,7 +32,12 @@ router = APIRouter(
     prefix="/api/plugins", tags=["plugins"], dependencies=[Depends(get_current_user)]
 )
 
-_SOROBAN_ROOT = Path(__file__).resolve().parents[3]     # …/soroban
+# …/soroban；PyInstaller 打包后 scraper/ 不打入 exe，放 exe 同级目录随包分发。
+_SOROBAN_ROOT = (
+    Path(sys.executable).resolve().parent           # 打包后：exe 同级
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[3]        # 源码：…/soroban
+)
 _SELF_URL = f"http://127.0.0.1:{os.environ.get('BACKEND_PORT', '8620')}"   # soroban 自身地址（插件同机回灌用）
 
 
@@ -207,7 +213,7 @@ async def scheduler_loop(interval: int = 60) -> None:
     """后台循环：每 interval 秒检查一次到点的插件并触发抓取（放进 lifespan）。"""
     while True:
         try:
-            with Session(engine) as session:
+            with Session(get_engine()) as session:
                 _run_due(session)
         except Exception as e:                          # 单轮异常不结束循环
             log.warning("插件定时循环异常：%s", e)

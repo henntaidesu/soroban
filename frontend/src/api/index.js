@@ -18,6 +18,14 @@ export const taobaoApi = {
   create: (data) => http.post('/taobao', data),
   update: (id, data) => http.patch(`/taobao/${id}`, data),
   remove: (id) => http.delete(`/taobao/${id}`),
+  ocr: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    // 首次调用要加载 OCR 模型，耗时可能超默认 15s，故单独放宽超时
+    return http.post('/taobao/ocr', form, {
+      headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000,
+    })
+  },
 }
 
 export const shipmentApi = {
@@ -60,6 +68,16 @@ export const pluginsApi = {
   saveConfig: (id, cfg) => http.put(`/plugins/${id}/config`, cfg),
   login: (id, account) => http.post(`/plugins/${id}/login`, null, { params: { account } }),
   fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
+}
+
+// 数据库迁移（SQLite ↔ MySQL）
+export const dbApi = {
+  status: () => http.get('/db/status'),
+  test: (cfg) => http.post('/db/test', cfg),
+  // 迁移含建库+建表+拷数据，耗时可能长，放宽超时
+  migrate: (cfg) => http.post('/db/migrate', cfg, { timeout: 120000 }),
+  // 切换到 MySQL（热切换 + 清空本地 SQLite 业务数据）
+  switch: (cfg) => http.post('/db/switch', cfg, { timeout: 60000 }),
 }
 
 export const tagsApi = {

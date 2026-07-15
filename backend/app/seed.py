@@ -10,7 +10,7 @@ import os
 from sqlmodel import Session, select
 
 from .auth import hash_password
-from .database import create_db_and_tables, engine
+from .database import create_db_and_tables, get_engine
 from .models import User
 
 
@@ -19,7 +19,7 @@ def main() -> None:
     username = os.getenv("SOROBAN_ADMIN_USER", "admin")
     password = os.getenv("SOROBAN_ADMIN_PASS", "admin123")
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         existing = session.exec(select(User).where(User.username == username)).first()
         if existing:
             print(f"用户 {username!r} 已存在，跳过。")

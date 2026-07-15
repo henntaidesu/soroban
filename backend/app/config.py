@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     SECRET_KEY: str = "dev-insecure-key-change-me"
+    # 本地 SQLite 文件位置（控制/配置库，恒 SQLite）。是否走 MySQL 由应用内「数据库」页
+    # 迁移决定，连接串加密存入 SQLite 的 app_db_config，运行期热切换（见 app/database.py、
+    # app/db/control.py）。此处即使填 MySQL 串也会被忽略、回退到默认 SQLite 文件。
     DATABASE_URL: str = "sqlite:///./soroban.db"
     TOKEN_EXPIRE_DAYS: int = 90  # 登录有效期 3 个月
     ALGORITHM: str = "HS256"

@@ -28,7 +28,7 @@ def list_items(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    conds = [MiscExpense.deleted_at.is_(None)]
+    conds = [MiscExpense.is_delete.is_(False)]
     if date_from:
         conds.append(MiscExpense.date >= date_from)
     if date_to:
@@ -62,7 +62,7 @@ def create_item(payload: MiscCreate, session: Session = Depends(get_session)):
 @router.get("/{item_id}", response_model=MiscRead)
 def get_item(item_id: int, session: Session = Depends(get_session)):
     item = session.get(MiscExpense, item_id)
-    if not item or item.deleted_at is not None:
+    if not item or item.is_delete:
         not_found("杂项")
     return item
 
@@ -70,7 +70,7 @@ def get_item(item_id: int, session: Session = Depends(get_session)):
 @router.patch("/{item_id}", response_model=MiscRead)
 def update_item(item_id: int, payload: MiscUpdate, session: Session = Depends(get_session)):
     item = session.get(MiscExpense, item_id)
-    if not item or item.deleted_at is not None:
+    if not item or item.is_delete:
         not_found("杂项")
     if not guarded_bump(session, MiscExpense, item_id, payload.version):
         conflict()
@@ -89,7 +89,7 @@ def update_item(item_id: int, payload: MiscUpdate, session: Session = Depends(ge
 @router.delete("/{item_id}")
 def delete_item(item_id: int, session: Session = Depends(get_session)):
     item = session.get(MiscExpense, item_id)
-    if not item or item.deleted_at is not None:
+    if not item or item.is_delete:
         not_found("杂项")
     soft_delete(item)
     session.add(item)

@@ -45,8 +45,8 @@ def _data_values(session: Session, field: str) -> set[str]:
     out: set[str] = set()
     for model, col in _FIELD_SOURCES.get(field, ()):
         stmt = select(col).where(col.is_not(None)).distinct()
-        if hasattr(model, "deleted_at"):
-            stmt = stmt.where(model.deleted_at.is_(None))
+        if hasattr(model, "is_delete"):
+            stmt = stmt.where(model.is_delete.is_(False))
         if model is TaobaoStaging:
             # 已忽略的暂存行是「看过后丢弃」的抓取结果，不算真在用（否则其账号会被误锁、误自动登记）
             stmt = stmt.where(TaobaoStaging.status != StagingStatus.ignored.value)

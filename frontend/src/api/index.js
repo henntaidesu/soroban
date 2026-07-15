@@ -70,6 +70,16 @@ export const pluginsApi = {
   fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
 }
 
+// 数据库迁移（SQLite ↔ MySQL）
+export const dbApi = {
+  status: () => http.get('/db/status'),
+  test: (cfg) => http.post('/db/test', cfg),
+  // 迁移含建库+建表+拷数据，耗时可能长，放宽超时
+  migrate: (cfg) => http.post('/db/migrate', cfg, { timeout: 120000 }),
+  // 切换到 MySQL（热切换 + 清空本地 SQLite 业务数据）
+  switch: (cfg) => http.post('/db/switch', cfg, { timeout: 60000 }),
+}
+
 export const tagsApi = {
   list: (field) => http.get(`/tags/${field}`),
   add: (field, value) => http.post(`/tags/${field}`, { value }),

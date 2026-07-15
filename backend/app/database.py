@@ -1,5 +1,15 @@
-"""Database engine + session. SQLite in WAL mode (读写不互相阻塞)。
-建表/迁移走 Alembic（见 backend/alembic/、README「更新」章）。"""
+"""Database engine + session。
+
+双引擎模型：
+- **控制引擎**（_control_engine）：始终指向 SQLite（soroban.db），保存 app_db_config
+  （当前后端 + 加密的 MySQL 连接串）。永不删除、只留系统配置。
+- **数据引擎**（_data_engine）：业务数据实际所在，SQLite 或 MySQL，由 app_db_config 决定；
+  可在运行期**热切换**（迁移到 MySQL 后无需重启）。
+
+所有业务代码通过 get_session() / get_engine() 取当前数据引擎——故热切换后自动生效。
+SQLite 模式下数据引擎即复用控制引擎（同一 soroban.db）。
+建表/迁移走 Alembic（见 backend/alembic/、README「数据库」章）。
+"""
 
 import asyncio
 import logging
@@ -8,10 +18,12 @@ from pathlib import Path
 from sqlite3 import Connection as SQLite3Connection
 
 from sqlalchemy import event
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
 from .config import settings
+from .db import control
 
 log = logging.getLogger("soroban.db")
 # backend/（alembic.ini 所在）；PyInstaller 打包后 alembic.ini/alembic/ 打入 _MEIPASS 根。
@@ -21,16 +33,25 @@ _ROOT = (
     else Path(__file__).resolve().parents[1]
 )
 
-# check_same_thread=False: FastAPI 在多个线程里用同一连接池
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+
+def build_engine(url: str) -> Engine:
+    """按方言构造 engine。
+    - SQLite：check_same_thread=False（FastAPI 多线程共用连接池）。
+    - MySQL：pool_pre_ping 防死连接（wait_timeout 掐断），pool_recycle 定期回收。"""
+    if url.startswith("sqlite"):
+        return create_engine(url, connect_args={"check_same_thread": False})
+    return create_engine(url, pool_pre_ping=True, pool_recycle=3600)
+
+
+def _control_url() -> str:
+    """控制/配置存储始终是 SQLite；.env 的 DATABASE_URL 仅用来定位 sqlite 文件。"""
+    url = settings.DATABASE_URL
+    return url if url.startswith("sqlite") else "sqlite:///./soroban.db"
 
 
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
-    """每条新连接都开 WAL + 外键约束。"""
+    """每条新 SQLite 连接都开 WAL + 外键约束（MySQL 连接自动跳过）。"""
     if isinstance(dbapi_connection, SQLite3Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
@@ -38,62 +59,115 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.close()
 
 
-def create_db_and_tables() -> None:
-    """用 Alembic 迁移到最新（`upgrade head`，幂等，启动/seed/demo 都调它）。
-    - 全新库：跑 baseline + 后续迁移，建全 schema。
-    - pre-Alembic 旧库（有表但无 alembic_version）：自动 stamp 到 baseline 再升级，无缝接管、不重复建表。
-    - 已纳管的库：只应用 baseline 之后的新迁移（git pull 后自动跟上）。
-    改了 models 后，生成新迁移：`cd backend && alembic revision --autogenerate -m "..."` 并提交（见 README）。"""
+# --- 引擎初始化：控制引擎恒 SQLite；数据引擎按配置解析 ---------------------------
+_control_engine: Engine = build_engine(_control_url())
+control.ensure_schema(_control_engine)          # 保证 app_db_config 表存在
+
+
+def _resolve_data_engine() -> tuple[Engine, str]:
+    cfg = control.read_config(_control_engine)
+    if cfg["backend"] == "mysql" and cfg["mysql_url"]:
+        return build_engine(cfg["mysql_url"]), cfg["mysql_url"]
+    return _control_engine, _control_url()      # SQLite 模式复用控制引擎
+
+
+_data_engine, _data_url = _resolve_data_engine()
+
+
+def get_engine() -> Engine:
+    """当前**数据**引擎（热切换后返回新引擎）。"""
+    return _data_engine
+
+
+def control_engine() -> Engine:
+    """控制引擎（恒 SQLite，存 app_db_config；用于切换后清理 SQLite 业务数据）。"""
+    return _control_engine
+
+
+def current_backend() -> str:
+    return "mysql" if _data_engine is not _control_engine else "sqlite"
+
+
+def set_data_engine(new_engine: Engine, url: str) -> None:
+    """热切换数据引擎。旧引擎若不是控制引擎则释放其连接池。"""
+    global _data_engine, _data_url
+    old = _data_engine
+    _data_engine = new_engine
+    _data_url = url
+    if old is not _control_engine and old is not new_engine:
+        old.dispose()
+    log.info("数据引擎已切换 → %s", current_backend())
+
+
+def get_session():
+    with Session(_data_engine) as session:      # 每次调用读当前全局 → 热切换自动生效
+        yield session
+
+
+def run_migrations(url: str) -> None:
+    """对任意 url 跑 Alembic `upgrade head`（幂等）。
+    - 全新库：建全 schema。
+    - pre-Alembic 旧库（有表无 alembic_version）：自动 stamp 到 baseline 再升级。
+    迁移到 MySQL 时由迁移服务先对 MySQL 调用本函数建 schema。"""
     from alembic import command
     from alembic.config import Config
     from alembic.script import ScriptDirectory
-    from sqlalchemy import inspect as sa_inspect
 
     cfg = Config(str(_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_ROOT / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    # 转义 %→%%：Config 底层 ConfigParser 会把 % 当插值语法（MySQL 密码含 %40 时会报错）；
+    # env.py 里 get_section 读回时插值自动还原为真实 URL。
+    cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 
-    with engine.connect() as conn:
-        tables = set(sa_inspect(conn).get_table_names())
-    if tables and "alembic_version" not in tables:      # pre-Alembic 旧库：现有 schema 即 baseline
+    check_engine = build_engine(url)
+    try:
+        with check_engine.connect() as conn:
+            tables = set(sa_inspect(conn).get_table_names())
+    finally:
+        if check_engine is not _control_engine and check_engine is not _data_engine:
+            check_engine.dispose()
+
+    # 判 pre-Alembic 旧库时要排除控制表 app_db_config——它由 control.ensure_schema 常驻创建，
+    # 否则「全新业务库 + 已存在控制表」会被误判为旧库、错误 stamp 到 baseline 而不建表。
+    business_tables = tables - {"app_db_config", "alembic_version"}
+    if business_tables and "alembic_version" not in tables:
         base_rev = ScriptDirectory.from_config(cfg).get_base()
         command.stamp(cfg, base_rev)
         log.info("检测到 pre-Alembic 旧库 → 已 stamp 到 baseline %s", base_rev)
     command.upgrade(cfg, "head")
 
 
-def get_session():
-    with Session(engine) as session:
-        yield session
+def create_db_and_tables() -> None:
+    """启动/seed/demo 调用：保证控制表存在，并把**当前数据后端**迁移到最新。"""
+    control.ensure_schema(_control_engine)
+    run_migrations(_data_url)
 
 
 def _wal_truncate() -> None:
-    """把 WAL 里的改动合并回主库并**截断** -wal 文件（回收其占用的磁盘空间）。
-    运行期截断只清空 -wal（文件仍在，因库还开着）；进程退出、连接全关后 SQLite 才删除 -wal/-shm。"""
-    if not settings.DATABASE_URL.startswith("sqlite"):
+    """把控制 SQLite 的 WAL 合并回主库并截断 -wal（回收磁盘）。控制引擎恒 SQLite。"""
+    if _control_engine.dialect.name != "sqlite":
         return
-    with engine.connect() as conn:
+    with _control_engine.connect() as conn:
         conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 async def wal_checkpoint_loop(interval: int = 600) -> None:
-    """后台循环：每 interval 秒（默认 10 分钟）截断一次 WAL，控制 -wal 体积、及时回收空间。
-    放进 lifespan；单轮异常不结束循环。"""
+    """后台循环：每 interval 秒截断一次 WAL，控制 -wal 体积。单轮异常不结束循环。"""
     while True:
         await asyncio.sleep(interval)
         try:
             _wal_truncate()
-        except Exception as e:                          # 单轮失败不结束循环
+        except Exception as e:
             log.warning("周期性 WAL checkpoint 失败：%s", e)
 
 
 def checkpoint_and_dispose() -> None:
-    """进程干净退出前调用：截断 WAL，再关闭连接池。
-    连接全部关闭后 SQLite 会自动删除 soroban.db-wal / soroban.db-shm。
-    （若进程被强杀，收尾不执行，这两个文件会残留——WAL 模式的固有行为，下次启动自动接管，不丢数据。）"""
+    """进程干净退出前调用：截断 WAL、关闭两个引擎的连接池。"""
     try:
         _wal_truncate()
-    except Exception as e:                              # 检查点失败不阻断关闭
+    except Exception as e:
         log.warning("关库前 WAL checkpoint 失败：%s", e)
     finally:
-        engine.dispose()                               # 关掉池内所有连接，触发 -wal/-shm 回收
+        if _data_engine is not _control_engine:
+            _data_engine.dispose()
+        _control_engine.dispose()

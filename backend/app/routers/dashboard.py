@@ -20,7 +20,7 @@ _EXCLUDED = tuple(EXCLUDED_STATUSES)
 
 
 def _valid_conds(model, has_status: bool):
-    conds = [model.deleted_at.is_(None)]
+    conds = [model.is_delete.is_(False)]
     if has_status:
         conds.append(model.status.notin_(_EXCLUDED))   # 取消/退款不计入
     return conds

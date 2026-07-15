@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlmodel import Session, select
 
 from .auth import hash_password
-from .database import create_db_and_tables, engine
+from .database import create_db_and_tables, get_engine
 from .models import (
     ColumnLayout, FxRate, ShipmentOrder, MiscExpense, OrderItem, StagingItem, TagOption,
     TaobaoOrder, TaobaoStaging, User,
@@ -31,7 +31,7 @@ D = lambda y, m, d: dt.date(y, m, d)  # noqa: E731
 
 def main() -> None:
     create_db_and_tables()
-    with Session(engine) as s:
+    with Session(get_engine()) as s:
         if not s.exec(select(User).where(User.username == "admin")).first():
             s.add(User(username="admin", password_hash=hash_password("admin123"), display_name="管理员"))
             s.commit()

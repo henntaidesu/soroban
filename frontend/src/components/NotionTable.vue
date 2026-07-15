@@ -13,7 +13,7 @@
 
         <thead>
           <tr>
-            <th class="gtn-th gtn-th-id">ID</th>
+            <th class="gtn-th gtn-th-id">{{ hideId ? '' : 'ID' }}</th>
             <th v-if="hasActions" class="gtn-th gtn-th-act">操作</th>
             <th v-if="expandable" class="gtn-th"></th>
             <th v-for="col in cols" :key="col.key" class="gtn-th"
@@ -72,7 +72,7 @@
           <template v-for="row in rows" :key="row.id">
             <tr class="gtn-row">
               <td class="gtn-td-id">
-                <span class="num">{{ row.id }}</span>
+                <span v-if="!hideId" class="num">{{ row.id }}</span>
                 <el-icon class="del" title="删除此行" @click="$emit('delete', row)"><Delete /></el-icon>
               </td>
               <td v-if="hasActions" class="gtn-td gtn-td-act"><slot name="actions" :row="row" /></td>
@@ -113,6 +113,7 @@ const props = defineProps({
   actionsWidth: { type: [Number, String], default: 72 },
   tableName: { type: String, default: '' },   // 有则启用列拖拽/拖宽 + 后端持久化
   openId: { type: [Number, String], default: null },   // 设置后自动展开该 id 的行（供跨页跳转定位）
+  hideId: { type: Boolean, default: false },   // 隐藏最左「ID」列的编号与表头（仍保留该窄列的新建/删除操作）
 })
 const emit = defineEmits(['save', 'add', 'delete'])
 const slots = useSlots()

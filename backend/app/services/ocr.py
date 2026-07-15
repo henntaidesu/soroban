@@ -14,6 +14,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
+from ..models import TaobaoStatus   # 状态枚举值的唯一真相，避免与后端漂移
+
 # 常见快递公司：关键词 → 规范全称。按「越具体越靠前」不重要（子串命中即可），
 # 但保证能覆盖淘宝寄件常见家；命中后统一输出规范名，便于「快递公司」列做标签归组。
 COMPANY_MAP = {
@@ -36,13 +38,13 @@ COMPANY_MAP = {
     "ems": "EMS",
 }
 
-# 来源平台识别：靠各平台订单详情页特有的文案线索。闲鱼截图（成交价在支付宝担保账户中、
-# 蚂蚁森林能量、开箱视频、我要退款等）优先级最高；再看京东、淘宝/天猫。命中即判定来源。
-PLATFORM_CUES = [
-    ("闲鱼", ("蚂蚁森林能量", "开箱视频", "担保账户", "担保交易", "闲鱼", "收货前拍摄", "芝麻信用")),
-    ("京东", ("京东", "京东物流", "京豆", "白条", "自营", "PLUS会员")),
-    ("淘宝", ("淘宝", "天猫", "旺旺", "花呗", "官方旗舰店")),
-]
+# OCR 只用于闲鱼——淘宝/京东走爬虫抓取。故 OCR 产出的来源恒为「闲鱼」；
+# 仅当截图出现明确的淘宝/京东强标记且无任何闲鱼信号时，判为「拿错截图」并拒识、提示改用爬虫。
+_XIANYU_CUES = ("蚂蚁森林能量", "开箱视频", "担保账户", "担保交易", "闲鱼", "收货前拍摄", "芝麻信用")
+# 强平台标记：出现且无闲鱼信号才判为该平台。刻意不含「淘宝/花呗」等宽泛词——闲鱼隶属淘宝，
+# 其页面也可能出现「淘宝」字样，用宽泛词会误伤闲鱼截图。
+_JD_MARKERS = ("京东", "京东物流", "京豆", "白条", "自营", "PLUS会员")
+_TAOBAO_MARKERS = ("天猫", "旺旺", "官方旗舰店")
 
 # 闲鱼物流卡通卡车模板：作为文案兜不住时的补充信号（有卡车 → 闲鱼）。多尺度模板匹配，
 # 相关分 ≥ 阈值即判定命中。参考图存在 services/xianyu_truck.png。
@@ -54,6 +56,9 @@ _truck_ref_loaded = False
 
 _engine = None
 _engine_lock = threading.Lock()
+# 识别在线程池里跑（见路由），多请求可并发到达；RapidOCR 引擎非保证可重入，
+# 故用锁串行化实际推理——事件循环不被阻塞、前端可持续上传，推理逐张完成。
+_infer_lock = threading.Lock()
 
 
 class OcrUnavailable(RuntimeError):
@@ -86,6 +91,14 @@ def _longest_digit_run(text: str, min_len: int = 1) -> Optional[str]:
     return best if len(best) >= min_len else None
 
 
+def _extract_tracking(text: str, min_len: int = 8) -> Optional[str]:
+    """快递单号：可能带字母前缀（顺丰 SF、京东 JD 等），取「字母数字混合、含≥6 位数字」的
+    最长串并统一大写；纯数字单号照常命中。要求含足够数字 → 排除纯字母串（如地址 ATPTSTKH）。"""
+    runs = re.findall(r"[A-Za-z0-9]+", text or "")
+    cands = [r for r in runs if len(r) >= min_len and sum(c.isdigit() for c in r) >= 6]
+    return max(cands, key=len).upper() if cands else None
+
+
 def _to_tokens(ocr_result) -> list[dict]:
     """把 RapidOCR 结果 [[box, text, score], ...] 归一成带几何信息的 token 列表。"""
     tokens = []
@@ -101,7 +114,8 @@ def _to_tokens(ocr_result) -> list[dict]:
             "y0": min(ys),
             "y1": max(ys),
             "h": max(ys) - min(ys),
-            "digits": _longest_digit_run(text or ""),
+            "digits": _longest_digit_run(text or ""),      # 订单号等纯数字用
+            "tracking": _extract_tracking(text or ""),     # 快递单号用（保留字母前缀）
         })
     return tokens
 
@@ -114,20 +128,70 @@ def _match_company(text: str) -> Optional[str]:
 
 
 def _same_row_value(anchor: dict, tokens: list[dict], row_tol: float,
-                    min_digits: int) -> Optional[str]:
-    """在与 anchor 同一行（y 接近）里找数字最长的值，优先取在 anchor 右侧的。
-    找不到同行则退回到 anchor 下方最近的数字框。"""
-    cands = [t for t in tokens if t is not anchor and t["digits"]
-             and len(t["digits"]) >= min_digits]
+                    min_len: int, key: str = "digits") -> Optional[str]:
+    """在与 anchor 同一行（y 接近）里找 key 值（digits/tracking）最长的框，优先取右侧的。
+    找不到同行则退回到 anchor 下方最近的框。"""
+    cands = [t for t in tokens if t is not anchor and t[key]
+             and len(t[key]) >= min_len]
     same_row = [t for t in cands if abs(t["cy"] - anchor["cy"]) <= row_tol]
     if same_row:
         right = [t for t in same_row if t["x0"] >= anchor["x0"]]
         pick = min(right or same_row, key=lambda t: abs(t["cy"] - anchor["cy"]))
-        return pick["digits"]
+        return pick[key]
     below = [t for t in cands if t["cy"] > anchor["cy"]]
     if below:
-        return min(below, key=lambda t: t["cy"] - anchor["cy"])["digits"]
+        return min(below, key=lambda t: t["cy"] - anchor["cy"])[key]
     return None
+
+
+def _extract_date(text: str) -> Optional[str]:
+    """从文本里抽出 YYYY-MM-DD（兼容 - / . 及全角连字符 – —），无则 None。"""
+    m = re.search(r"(\d{4})\s*[-/.–—]\s*(\d{1,2})\s*[-/.–—]\s*(\d{1,2})", text or "")
+    if not m:
+        return None
+    y, mo, d = (int(g) for g in m.groups())
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+
+def _parse_order_date(anchor: dict, tokens: list[dict], row_tol: float) -> Optional[str]:
+    """下单时间：锚点框自身或同一行里取日期（避开付款/发货时间——它们各自有独立标签行）。"""
+    if (d := _extract_date(anchor["text"])):
+        return d
+    same_row = [t for t in tokens if t is not anchor and abs(t["cy"] - anchor["cy"]) <= row_tol]
+    same_row.sort(key=lambda t: t["x0"])
+    for t in same_row:
+        if (d := _extract_date(t["text"])):
+            return d
+    return None
+
+
+def _has_cjk(text: str) -> bool:
+    return any("一" <= ch <= "鿿" for ch in (text or ""))
+
+
+def _parse_product(tokens: list[dict], row_tol: float, price_anchor: Optional[dict]) -> Optional[str]:
+    """商品名称：成交价上方最近的「挂牌价」所在行的中文文本即商品标题。
+    （闲鱼订单页：商品图右侧一行 = 标题 + 单件挂牌价，位于「成交价」上方。）"""
+    if price_anchor is None:
+        return None
+
+    def amount(text: str):
+        return re.search(r"[¥￥]\s*[0-9]", text or "")
+
+    above = [t for t in tokens if amount(t["text"]) and t["cy"] < price_anchor["cy"] - row_tol]
+    if not above:
+        return None
+    listing = max(above, key=lambda t: t["cy"])   # 最靠近成交价的上方价 = 挂牌价行
+    same_row = [t for t in tokens if t is not listing
+                and abs(t["cy"] - listing["cy"]) <= row_tol and _has_cjk(t["text"])]
+    if same_row:
+        title = max(same_row, key=lambda t: len(t["text"]))["text"]
+    else:   # 标题可能与价格合并在同一框：去掉价格片段后取剩余文本
+        title = re.sub(r"[¥￥]\s*[0-9][0-9.,]*", "", listing["text"])
+    title = title.strip()
+    return title or None
 
 
 def _parse_price(anchor: dict, tokens: list[dict], row_tol: float) -> Optional[str]:
@@ -149,12 +213,32 @@ def _parse_price(anchor: dict, tokens: list[dict], row_tol: float) -> Optional[s
     return None
 
 
-def _detect_platform(full_text: str) -> Optional[str]:
-    """按平台特有文案判定来源（闲鱼 > 京东 > 淘宝），都没命中返回 None。"""
-    for platform, cues in PLATFORM_CUES:
-        if any(cue in full_text for cue in cues):
-            return platform
+def _is_xianyu(full_text: str) -> bool:
+    """文案里是否出现闲鱼特征线索。"""
+    return any(c in full_text for c in _XIANYU_CUES)
+
+
+def _detect_other_platform(full_text: str) -> Optional[str]:
+    """是否出现明确的淘宝/京东强标记（用于拒识非闲鱼截图）；都没有返回 None。"""
+    if any(m in full_text for m in _JD_MARKERS):
+        return "京东"
+    if any(m in full_text for m in _TAOBAO_MARKERS):
+        return "淘宝"
     return None
+
+
+def _detect_status(full_text: str, has_express: bool) -> str:
+    """判交易状态：终态优先；发货后（头部「卖家已发货/待确认收货」或已有快递单号）→ 待收货；
+    「等待卖家发货」→ 待发货；都不明确时以有无快递单号兜底（有单号必已发货）。"""
+    if "交易成功" in full_text or "交易完成" in full_text:
+        return TaobaoStatus.received.value       # 交易成功
+    if "交易关闭" in full_text or "已关闭" in full_text:
+        return TaobaoStatus.cancelled.value      # 交易关闭
+    if has_express or any(k in full_text for k in ("待确认收货", "卖家已发货", "待收货", "确认收货")):
+        return TaobaoStatus.shipped.value        # 待收货
+    if any(k in full_text for k in ("等待卖家发货", "等待发货", "待卖家发货", "待发货")):
+        return TaobaoStatus.paid.value           # 待发货
+    return TaobaoStatus.paid.value               # 兜底：待发货
 
 
 def _load_truck_ref():
@@ -213,12 +297,11 @@ def _truck_present(rgb_arr) -> bool:
 def parse_order_fields(ocr_result) -> dict:
     """从 OCR 结果里抽取 {platform, express_company, express_no, order_no, price_cny}（缺省 None）。"""
     tokens = _to_tokens(ocr_result)
+    # platform 由 recognize_order 统一判定（需结合卡车图像），这里只抽文本字段
     out = {"platform": None, "express_company": None, "express_no": None,
-           "order_no": None, "price_cny": None}
+           "order_no": None, "price_cny": None, "order_date": None, "product": None}
     if not tokens:
         return out
-
-    out["platform"] = _detect_platform("\n".join(t["text"] for t in tokens))
 
     heights = [t["h"] for t in tokens if t["h"] > 0]
     row_tol = (sum(heights) / len(heights) * 0.8) if heights else 12.0
@@ -228,8 +311,8 @@ def parse_order_fields(ocr_result) -> dict:
         canonical = _match_company(t["text"])
         if canonical:
             out["express_company"] = canonical
-            run = _longest_digit_run(t["text"], 8)
-            out["express_no"] = run or _same_row_value(t, tokens, row_tol, 8)
+            run = _extract_tracking(t["text"], 8)   # 保留字母前缀（如顺丰 SF）
+            out["express_no"] = run or _same_row_value(t, tokens, row_tol, 8, key="tracking")
             break
 
     # 订单号：锚点为含「订单编号/订单号」的框；值为本框或同行最长数字（多为 15~20 位）
@@ -240,14 +323,25 @@ def parse_order_fields(ocr_result) -> dict:
             break
 
     # 成交价：锚点为含「成交价」的框；同行取 ¥ 金额
+    price_anchor = None
     for t in tokens:
         if "成交价" in t["text"]:
+            price_anchor = t
             price = _parse_price(t, tokens, row_tol)
             if price is not None:
                 try:
                     out["price_cny"] = str(Decimal(price))
                 except Exception:
                     out["price_cny"] = price
+            break
+
+    # 商品名称：成交价上方挂牌价所在行的中文标题
+    out["product"] = _parse_product(tokens, row_tol, price_anchor)
+
+    # 下单时间：锚点为含「下单时间」的框；同行取日期（区别于付款/发货时间）
+    for t in tokens:
+        if "下单时间" in t["text"]:
+            out["order_date"] = _parse_order_date(t, tokens, row_tol)
             break
 
     return out
@@ -265,11 +359,27 @@ def recognize_order(image_bytes: bytes) -> dict:
     except Exception as e:
         raise ValueError(f"图片无法解析：{e}") from e
 
-    result, _ = engine(arr)
+    with _infer_lock:                 # 串行化引擎推理（RapidOCR 非保证可重入）
+        result, _ = engine(arr)
     fields = parse_order_fields(result)
-    # 文案没判出来源时，用卡通卡车模板兜底：有卡车 → 闲鱼
-    if not fields.get("platform") and _truck_present(arr):
+
+    # OCR 只产出闲鱼数据：来源恒为「闲鱼」。仅当截图有明确淘宝/京东强标记、且无任何闲鱼信号
+    # （文案线索或卡通卡车）时，判为拿错截图 → 拒识并提示改用爬虫（reject_reason 非空）。
+    full = "\n".join(item[1] for item in (result or []))
+    other = _detect_other_platform(full)
+    is_xianyu = _is_xianyu(full) or _truck_present(arr)
+    if other and not is_xianyu:
+        fields["platform"] = None
+        fields["reject_reason"] = f"疑似{other}订单截图；OCR 仅支持闲鱼，淘宝/京东请用爬虫抓取"
+    else:
         fields["platform"] = "闲鱼"
+        fields["reject_reason"] = None
+    # 交易状态：有快递单号（已发货）→ 待收货，否则待发货（另按头部状态语细分终态）
+    fields["status"] = _detect_status(full, bool(fields.get("express_no")))
+    # 交易成功（已完成）无需物流信息：不回填快递公司/快递号
+    if fields["status"] == TaobaoStatus.received.value:
+        fields["express_company"] = None
+        fields["express_no"] = None
     # 附带完整识别文本，便于前端在缺字段时给用户核对/手动补
-    fields["raw_text"] = "\n".join(item[1] for item in (result or []))
+    fields["raw_text"] = full
     return fields

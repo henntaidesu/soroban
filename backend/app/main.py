@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from . import models  # noqa: F401  确保建表前所有模型已注册
 from .config import settings
 from .database import checkpoint_and_dispose, create_db_and_tables, wal_checkpoint_loop
-from .routers import auth, dashboard, fx, shipment, layout, misc, plugins, staging, tags, taobao
+from .routers import auth, dashboard, dbadmin, fx, shipment, layout, misc, plugins, staging, tags, taobao
 from .routers.plugins import scheduler_loop
 from .services.fx import fx_loop
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(fx_loop()),
         asyncio.create_task(scheduler_loop()),
+        # 控制引擎恒为 SQLite（存 app_db_config），故 WAL 截断循环始终运行
         asyncio.create_task(wal_checkpoint_loop(600)),   # 每 10 分钟截断一次 WAL
     ]
     try:
@@ -58,6 +59,7 @@ app.add_middleware(
 for r in (
     auth.router, taobao.router, shipment.router, misc.router,
     staging.router, dashboard.router, fx.router, layout.router, tags.router, plugins.router,
+    dbadmin.router,
 ):
     app.include_router(r)
 

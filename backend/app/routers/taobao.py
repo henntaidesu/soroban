@@ -25,7 +25,7 @@ def _check_shipment(session: Session, shipment_id):
     """挂靠的集运订单必须存在且未软删（防悬空/无效外链）。"""
     if shipment_id is not None:
         shipment = session.get(ShipmentOrder, shipment_id)
-        if not shipment or shipment.deleted_at is not None:
+        if not shipment or shipment.is_delete:
             raise HTTPException(status_code=422, detail="所属集运订单不存在或已删除")
 
 
@@ -44,7 +44,7 @@ def list_orders(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    conds = [TaobaoOrder.deleted_at.is_(None)]
+    conds = [TaobaoOrder.is_delete.is_(False)]
     if id is not None:
         conds.append(TaobaoOrder.id == id)
     if unassigned:
@@ -77,7 +77,10 @@ def list_orders(
 
 @router.post("/ocr")
 async def ocr_order(file: UploadFile = File(...)):
-    """识别订单详情截图，抽取快递公司/快递号/订单号/成交价供前端自动填表。"""
+    """识别订单详情截图，抽取快递公司/快递号/订单号/成交价供前端自动填表。
+    OCR 为 CPU 密集且较慢，放线程池执行 → 不阻塞事件循环，前端可连续上传多张并发识别。"""
+    from fastapi.concurrency import run_in_threadpool
+
     from ..services.ocr import OcrUnavailable, recognize_order
 
     if file.content_type and not file.content_type.startswith("image/"):
@@ -88,7 +91,7 @@ async def ocr_order(file: UploadFile = File(...)):
     if len(data) > _MAX_OCR_BYTES:
         raise HTTPException(status_code=413, detail="图片过大（上限 10MB）")
     try:
-        return recognize_order(data)
+        return await run_in_threadpool(recognize_order, data)
     except OcrUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
@@ -118,7 +121,7 @@ def create_order(payload: TaobaoCreate, session: Session = Depends(get_session))
 @router.get("/{order_id}", response_model=TaobaoRead)
 def get_order(order_id: int, session: Session = Depends(get_session)):
     order = session.get(TaobaoOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("淘宝订单")
     return order
 
@@ -126,7 +129,7 @@ def get_order(order_id: int, session: Session = Depends(get_session)):
 @router.patch("/{order_id}", response_model=TaobaoRead)
 def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depends(get_session)):
     order = session.get(TaobaoOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("淘宝订单")
     if not guarded_bump(session, TaobaoOrder, order_id, payload.version):
         conflict()
@@ -154,7 +157,7 @@ def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depend
 @router.delete("/{order_id}")
 def delete_order(order_id: int, session: Session = Depends(get_session)):
     order = session.get(TaobaoOrder, order_id)
-    if not order or order.deleted_at is not None:
+    if not order or order.is_delete:
         not_found("淘宝订单")
     soft_delete(order)
     session.add(order)

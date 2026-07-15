@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_user
 from ..config import settings
-from ..database import engine, get_session
+from ..database import get_engine, get_session
 from ..models import PluginConfig, User, utcnow
 from ..schemas import PluginConfigIn
 
@@ -213,7 +213,7 @@ async def scheduler_loop(interval: int = 60) -> None:
     """后台循环：每 interval 秒检查一次到点的插件并触发抓取（放进 lifespan）。"""
     while True:
         try:
-            with Session(engine) as session:
+            with Session(get_engine()) as session:
                 _run_due(session)
         except Exception as e:                          # 单轮异常不结束循环
             log.warning("插件定时循环异常：%s", e)

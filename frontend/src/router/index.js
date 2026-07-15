@@ -18,6 +18,7 @@ const routes = [
       { path: 'shipment', name: 'Shipment', component: () => import('@/views/Shipment/index.vue'), meta: { title: '集运订单', icon: 'Ship' } },
       { path: 'misc', name: 'Misc', component: () => import('@/views/Misc/index.vue'), meta: { title: '杂项支出', icon: 'Money' } },
       { path: 'plugins', name: 'Plugins', component: () => import('@/views/Plugins/index.vue'), meta: { title: '插件管理', icon: 'Connection' } },
+      { path: 'database', name: 'Database', component: () => import('@/views/Database/index.vue'), meta: { title: '数据库', icon: 'Coin' } },
     ],
   },
 ]

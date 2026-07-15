@@ -3,7 +3,7 @@
 import datetime as dt
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, select
@@ -13,6 +13,8 @@ from ..database import get_session
 from ..models import ShipmentOrder, OrderItem, StagingStatus, TaobaoOrder, TaobaoStaging, utcnow
 from ..schemas import TaobaoCreate, TaobaoRead, TaobaoUpdate
 from .common import conflict, guarded_bump, not_found, soft_delete
+
+_MAX_OCR_BYTES = 10 * 1024 * 1024   # 截图一般 <2MB，限 10MB 防大图拖垮识别
 
 router = APIRouter(
     prefix="/api/taobao", tags=["taobao"], dependencies=[Depends(get_current_user)]
@@ -71,6 +73,26 @@ def list_orders(
         .limit(limit)
     ).all()
     return {"items": [TaobaoRead.model_validate(r) for r in rows], "total": total}
+
+
+@router.post("/ocr")
+async def ocr_order(file: UploadFile = File(...)):
+    """识别订单详情截图，抽取快递公司/快递号/订单号/成交价供前端自动填表。"""
+    from ..services.ocr import OcrUnavailable, recognize_order
+
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="请上传图片文件")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="图片为空")
+    if len(data) > _MAX_OCR_BYTES:
+        raise HTTPException(status_code=413, detail="图片过大（上限 10MB）")
+    try:
+        return recognize_order(data)
+    except OcrUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("", response_model=TaobaoRead)

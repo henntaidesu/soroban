@@ -4,6 +4,13 @@
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable :open-id="focusId"
                    table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
         <template #toolbar>
+          <el-upload ref="ocrUpload" class="ocr-up" drag :show-file-list="false" :auto-upload="false"
+                     accept="image/*" :disabled="ocrLoading" :on-change="onOcrPick">
+            <div class="ocr-drop" :class="{ busy: ocrLoading }">
+              <el-icon class="ocr-ic"><Camera /></el-icon>
+              <span>{{ ocrLoading ? '识别中…' : '点击或拖拽截图 OCR识别' }}</span>
+            </div>
+          </el-upload>
           <el-tag v-if="focusId" type="warning" closable disable-transitions class="focus-chip" @close="clearFocus">
             定位订单 #{{ focusId }} · 点 × 看全部
           </el-tag>
@@ -89,9 +96,9 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete } from '@element-plus/icons-vue'
+import { Camera, Check, Delete } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
-import { TAOBAO_STATUS, statusStyle } from '@/constants'
+import { ORDER_SOURCES, TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -106,6 +113,7 @@ const COL_W = 110
 const columns = [
   { key: 'date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: COL_W, clearable: false },
@@ -114,6 +122,7 @@ const columns = [
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: COL_W, placeholder: '实付日元' },
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: COL_W, placeholder: '当天汇率' },
+  { key: 'express_company', label: '快递公司', type: 'text', width: COL_W, placeholder: '快递公司' },
   { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
   { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
 ]
@@ -215,6 +224,46 @@ async function commitDraft(row) {
   await saveItems(row)
 }
 
+// OCR 识别订单截图：抽取快递公司/快递号/订单号/成交价，识别到就新建一行并回填
+const ocrLoading = ref(false)
+const ocrUpload = ref(null)
+async function onOcrPick(uploadFile) {
+  const file = uploadFile?.raw
+  if (!file || ocrLoading.value) return
+  if (file.type && !file.type.startsWith('image/')) {   // 拖拽不受 accept 约束，挡掉非图片
+    ElMessage.warning('请拖入图片文件')
+    ocrUpload.value?.clearFiles?.()
+    return
+  }
+  ocrLoading.value = true
+  try {
+    const res = await taobaoApi.ocr(file)
+    const data = {}
+    if (res.platform) data.platform = res.platform
+    if (res.express_company) data.express_company = res.express_company
+    if (res.express_no) data.express_no = res.express_no
+    if (res.order_no) data.order_no = res.order_no
+    if (res.price_cny != null && res.price_cny !== '') data.price_cny = res.price_cny
+    if (!Object.keys(data).length) {
+      ElMessage.warning('未能从截图识别到快递/订单信息，请手动填写')
+      return
+    }
+    await addRow(data)
+    const parts = []
+    if (data.platform) parts.push(`来源 ${data.platform}`)
+    if (data.express_company) parts.push(`快递 ${data.express_company}`)
+    if (data.express_no) parts.push(`快递号 ${data.express_no}`)
+    if (data.order_no) parts.push(`订单号 ${data.order_no}`)
+    if (data.price_cny) parts.push(`成交价 ¥${data.price_cny}`)
+    ElMessage.success(`已识别并新建订单 · ${parts.join(' · ')}`)
+  } catch (_) {
+    // 依赖未装(503)/图片错误(400) 等由 http 拦截器统一提示
+  } finally {
+    ocrLoading.value = false
+    ocrUpload.value?.clearFiles?.()   // 清掉内部文件列表，便于重复选同一张图
+  }
+}
+
 async function addRow(data = {}) {
   try {
     // status 不写死：后端 TaobaoBase 默认「待发货」，避免枚举改名后前端残留非法值（曾用'已付'→422）
@@ -254,6 +303,18 @@ onMounted(() => { loadShipment() })
 
 <style scoped>
 .pager { margin-top: 12px; justify-content: flex-end; }
+/* OCR 上传：紧凑拖拽区，内联进工具栏（覆盖 el-upload drag 默认的大块留白） */
+.ocr-up { display: inline-flex; }
+.ocr-up :deep(.el-upload) { display: inline-flex; }
+.ocr-up :deep(.el-upload-dragger) {
+  padding: 0 14px; height: 32px; display: inline-flex; align-items: center;
+  border-radius: 4px; border-style: dashed; border-color: #3a4a6b; background: transparent;
+}
+.ocr-up :deep(.el-upload-dragger:hover),
+.ocr-up :deep(.el-upload-dragger.is-dragover) { border-color: #409eff; background: rgba(64, 158, 255, 0.08); }
+.ocr-drop { display: inline-flex; align-items: center; gap: 6px; color: #7f9cff; font-size: 13px; white-space: nowrap; }
+.ocr-drop.busy { color: #7d8aa3; }
+.ocr-ic { font-size: 15px; }
 .focus-chip { font-weight: 500; }
 .focus-empty { color: #9ba8bf; font-size: 13px; padding: 16px; text-align: center; }
 .ph { color: #5b6880; }

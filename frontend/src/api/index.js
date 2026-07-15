@@ -18,6 +18,14 @@ export const taobaoApi = {
   create: (data) => http.post('/taobao', data),
   update: (id, data) => http.patch(`/taobao/${id}`, data),
   remove: (id) => http.delete(`/taobao/${id}`),
+  ocr: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    // 首次调用要加载 OCR 模型，耗时可能超默认 15s，故单独放宽超时
+    return http.post('/taobao/ocr', form, {
+      headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000,
+    })
+  },
 }
 
 export const shipmentApi = {

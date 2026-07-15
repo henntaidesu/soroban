@@ -127,6 +127,7 @@ class TaobaoOrder(LedgerBase, table=True):
     url: Optional[str] = None                                # 商品链接
     category: Optional[str] = None                           # 分类
     status: str = Field(default=TaobaoStatus.paid.value, index=True)
+    platform: Optional[str] = Field(default=None, index=True)     # 来源平台（闲鱼/淘宝/京东）
     express_no: Optional[str] = Field(default=None, index=True)   # 快递号（归组用）
     express_company: Optional[str] = None                    # 快递公司
     taobao_account: Optional[str] = Field(default=None, index=True)  # 淘宝账号（2个）

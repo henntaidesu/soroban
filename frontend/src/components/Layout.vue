@@ -77,11 +77,11 @@ const router = useRouter()
 const route = useRoute()
 const nav = [
   { path: '/dashboard', title: '看板', icon: 'Odometer' },
-  { path: '/staging', title: '全部订单', icon: 'Tickets' },
   { path: '/orders', title: '商品订单', icon: 'ShoppingCart' },
   { path: '/items', title: '物品列表', icon: 'Grid' },
   { path: '/shipment', title: '集运订单', icon: 'Ship' },
   { path: '/misc', title: '杂项支出', icon: 'Money' },
+  { path: '/staging', title: '暂存订单', icon: 'Tickets' },
   { path: '/plugins', title: '插件管理', icon: 'Connection' },
   { path: '/database', title: '数据库', icon: 'Coin' },
 ]

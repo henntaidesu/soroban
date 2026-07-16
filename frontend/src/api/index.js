@@ -78,7 +78,7 @@ export const pluginsApi = {
   deleteAccount: (id, account) => http.delete(`/plugins/${id}/account`, { params: { account } }),
   renameAccount: (id, oldName, newName) =>
     http.post(`/plugins/${id}/account/rename`, null, { params: { old: oldName, new: newName } }),
-  // 按账号删订单：暂存(全部订单页) / 账本(商品订单页，软删)
+  // 按账号删订单：暂存(暂存订单页) / 账本(商品订单页，软删)
   deleteAccountStaging: (id, account) => http.delete(`/plugins/${id}/account/staging`, { params: { account } }),
   deleteAccountOrders: (id, account) => http.delete(`/plugins/${id}/account/orders`, { params: { account } }),
 }

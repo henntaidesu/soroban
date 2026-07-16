@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="bar">
-      <span class="hint">soroban 扫 scraper/ 下 soroban-scraper-* 目录作为插件。这里加账号、授权、启停、定时；插件只管抓取，抓到的单进「全部订单」待处理。</span>
+      <span class="hint">soroban 扫 scraper/ 下 soroban-scraper-* 目录作为插件。这里加账号、授权、启停、定时；插件只管抓取，抓到的单进「暂存订单」待处理。</span>
       <el-button size="small" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
@@ -216,7 +216,7 @@ async function doDeleteAccount(p, account) {
 async function doDeleteAccountStaging(p, account) {
   try {
     await ElMessageBox.confirm(
-      `确定删除账号「${account}」在「全部订单」里的全部暂存记录（含物品明细）？此操作不可恢复，且不影响已进账本的正式订单。`,
+      `确定删除账号「${account}」在「暂存订单」里的全部暂存记录（含物品明细）？此操作不可恢复，且不影响已进账本的正式订单。`,
       '删除该账号的暂存单', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
   } catch (_) { return }

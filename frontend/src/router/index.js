@@ -33,4 +33,9 @@ router.beforeEach((to, from, next) => {
   next()
 })
 
+// 页面标题：Soroban - 页面名（无页面名时只显示 Soroban）
+router.afterEach((to) => {
+  document.title = to.meta?.title ? `Soroban - ${to.meta.title}` : 'Soroban'
+})
+
 export default router

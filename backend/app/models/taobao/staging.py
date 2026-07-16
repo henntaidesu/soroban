@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import Column, Index, Text, text
 from sqlmodel import Field, Relationship, SQLModel
 
-from ..base import StagingStatus, utcnow
+from ..base import StagingStatus, price_from_items, utcnow
 
 
 class TaobaoStaging(SQLModel, table=True):
@@ -47,13 +47,19 @@ class TaobaoStaging(SQLModel, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
 
+    def sync_from_items(self) -> None:
+        """暂存人民币价由物品单价×数量之和生成（与账本同口径）。改动 items 后调用。"""
+        self.price_cny = price_from_items(self.items)
+
 
 class StagingItem(SQLModel, table=True):
-    """暂存订单的物品行（一单多物），结构对齐 OrderItem。"""
+    """暂存订单的物品行（一单多物），结构对齐 OrderItem（含单价 price_cny / auto）。"""
 
     id: Optional[int] = Field(default=None, primary_key=True)
     staging_id: int = Field(foreign_key="taobaostaging.id", index=True)
     name: str = Field(max_length=255)
     quantity: int = Field(default=1)
+    price_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)  # 单价（元）
+    auto: bool = Field(default=False)                       # True=系统自动生成/自动定价（前端灰显）
 
     staging: Optional[TaobaoStaging] = Relationship(back_populates="items")

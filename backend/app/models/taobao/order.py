@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import Column, Index, Text, text
 from sqlmodel import Field, Relationship
 
-from ..base import LedgerBase, TaobaoStatus
+from ..base import LedgerBase, TaobaoStatus, price_from_items
 
 
 class TaobaoOrder(LedgerBase, table=True):
@@ -46,3 +46,8 @@ class TaobaoOrder(LedgerBase, table=True):
         back_populates="taobao_order",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
+
+    def sync_from_items(self) -> None:
+        """订单价由物品单价×数量之和生成，再重算日元。改动 items 后必须调用。"""
+        self.price_cny = price_from_items(self.items)
+        self.compute_money()

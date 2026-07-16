@@ -24,13 +24,14 @@ from ..models import (
     utcnow,
 )
 from ..schemas import StagingCreate, StagingItemRead, StagingRead, StagingUpdate, TaobaoRead
-from .common import conflict, guarded_bump, not_found
+from .common import build_items, conflict, guarded_bump, not_found
 
 router = APIRouter(
     prefix="/api/staging", tags=["staging"], dependencies=[Depends(get_current_user)]
 )
 
-# 已导入行：暂存字段 → 账本字段的映射（单一真源写穿账本；status=导入工作流状态留暂存自身）
+# 已导入行：暂存字段 → 账本字段的映射（单一真源写穿账本；status=导入工作流状态留暂存自身）。
+# price_cny 不在此列：它由物品单价×数量派生（见 sync_from_items），改价走物品、不直接写。
 _SHARED_TO_ORDER = {
     "order_date": "date",
     "order_no": "order_no",
@@ -38,7 +39,6 @@ _SHARED_TO_ORDER = {
     "taobao_account": "taobao_account",
     "platform": "platform",
     "express_no": "express_no",
-    "price_cny": "price_cny",
     "fx_rate": "fx_rate",
     "order_status": "status",
 }
@@ -65,7 +65,11 @@ def _read(session: Session, row: TaobaoStaging) -> StagingRead:
         data.price_cny = order.price_cny
         data.fx_rate = order.fx_rate
         data.order_status = order.status
-        data.items = [StagingItemRead(id=it.id, name=it.name, quantity=it.quantity) for it in order.items]
+        data.items = [
+            StagingItemRead(id=it.id, name=it.name, quantity=it.quantity,
+                            price_cny=it.price_cny, auto=it.auto)
+            for it in order.items
+        ]
     return data
 
 
@@ -103,10 +107,12 @@ def list_staging(
 def create_staging(payload: StagingCreate, session: Session = Depends(get_session)):
     from ..services.fx import rate_for_date  # 局部导入避免循环
 
-    row = TaobaoStaging(**payload.model_dump(exclude={"items"}))
+    row = TaobaoStaging(**payload.model_dump(exclude={"items", "price_cny"}))  # 价由物品派生
     if row.fx_rate is None:                  # 按下单日期匹配汇率；无记录则退回当前(入库当天)汇率
         row.fx_rate = rate_for_date(session, row.order_date)
-    row.items = [StagingItem(name=it.name, quantity=it.quantity) for it in payload.items]
+    # 最小单位是物品：至少 1 条（无物品则按商品名+订单价自动生成，灰显可改）
+    row.items = [StagingItem(**d) for d in build_items(payload.items, payload.price_cny, payload.shop)]
+    row.sync_from_items()                    # price_cny = Σ(单价×数量)
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -121,7 +127,7 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     # 暂存行乐观锁：加载后被爬虫/他人改过 → 409，前端刷新（version 原子自增 + 刷新 updated_at）
     if not guarded_bump(session, TaobaoStaging, row_id, payload.version):
         conflict()
-    data = payload.model_dump(exclude_unset=True, exclude={"items", "version"})
+    data = payload.model_dump(exclude_unset=True, exclude={"items", "version", "price_cny"})  # 价由物品派生
     order = _linked_order(session, row)
 
     if order is not None:
@@ -135,11 +141,13 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
                 setattr(row, key, value)   # 暂存行自身原始列也同步，避免 tags._data_values / 列表筛选读到陈旧值
             elif key == "status":
                 row.status = value
-        order.compute_money()
-        if payload.items is not None:                   # 物品也写穿账本（[] = 清空）
-            order.items.clear()
-            for it in payload.items:
-                order.items.append(OrderItem(name=it.name, quantity=it.quantity))
+        if payload.items is not None:                   # 物品写穿账本（单一真源）+ 暂存镜像，两页一致
+            seed = payload.price_cny if payload.price_cny is not None else order.price_cny
+            built = build_items(payload.items, seed, order.shop)
+            order.items = [OrderItem(**d) for d in built]
+            row.items = [StagingItem(**d) for d in built]
+        order.sync_from_items()                         # 账本价+日元由物品派生（fx 变也重算）
+        row.sync_from_items()                           # 暂存价镜像
         session.add(order)
         session.add(row)
         session.commit()                                # order_no 撞账本唯一索引 → IntegrityError → 409
@@ -149,10 +157,11 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     # 未导入：编辑暂存自身副本
     for key, value in data.items():
         setattr(row, key, value)
-    if payload.items is not None:                       # 给了 items 就整体替换（[] = 清空）
-        row.items.clear()
-        for it in payload.items:
-            row.items.append(StagingItem(name=it.name, quantity=it.quantity))
+    if payload.items is not None:                       # 给了 items 就整体替换（[] → 自动补 1 条占位）
+        # seed 兜底：爬虫重抓未导入行时只带订单总价、物品无单价 → 优先总价、缺失则用当前价重播种，绝不清零
+        seed = payload.price_cny if payload.price_cny is not None else row.price_cny
+        row.items = [StagingItem(**d) for d in build_items(payload.items, seed, row.shop)]
+    row.sync_from_items()
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -204,13 +213,17 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         taobao_account=row.taobao_account,
         platform=row.platform,               # 来源随单迁移到账本
         express_no=row.express_no,
-        price_cny=row.price_cny,
         fx_rate=row.fx_rate or rate_for_date(session, row.order_date),  # 优先暂存记录的汇率；否则按下单日期匹配
         status=row.order_status or TaobaoStatus.paid.value,   # 订单状态一同迁移
         source=Source.imported.value,
     )
-    order.compute_money()
-    order.items = [OrderItem(name=it.name, quantity=it.quantity) for it in row.items]
+    # 物品（含单价/auto）随单迁移；订单价由物品派生（= 暂存价，一致）。暂存无物品时兜底自动生成 1 条。
+    if row.items:
+        order.items = [OrderItem(name=it.name, quantity=it.quantity, price_cny=it.price_cny, auto=it.auto)
+                       for it in row.items]
+    else:
+        order.items = [OrderItem(**d) for d in build_items([], row.price_cny, row.shop)]
+    order.sync_from_items()
     session.add(order)
     session.flush()                             # 拿到 order.id
 

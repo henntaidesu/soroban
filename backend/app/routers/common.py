@@ -1,10 +1,44 @@
-"""Shared router helpers: optimistic lock (DB-level guard), soft delete, errors."""
+"""Shared router helpers: optimistic lock (DB-level guard), soft delete, errors, item building."""
+
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy import update as sa_update
 from sqlmodel import Session
 
 from ..models import utcnow
+
+_CNY_Q = Decimal("0.01")     # 人民币量化到分
+
+
+def build_items(items_in, seed_total, shop):
+    """把「物品输入 + 订单种子总价 + 商品名」规整成 ≥1 条物品 dict(name/quantity/price_cny/auto)。
+
+    系统最小单位是物品，订单必须有 ≥1 物品（见 README「物品为最小单位」）：
+    - 没给物品 → 自动生成 1 条（name=商品名、数量 1、单价=种子总价、auto=True 灰显可改）。
+    - 给了物品但都没单价、却有种子总价（如爬虫只知订单总价）→ 把总价折成第一条单价(总价/数量)、
+      其余置 0，全部 auto=True 待人工拆分复核。
+    - 给了带单价的物品 → 原样采用（单价 None→0）；auto 沿用客户端回传（未改动的自动项保持灰）。
+    返回的 dict 同时适用 OrderItem 与 StagingItem 构造。"""
+    if not items_in:
+        return [{"name": (shop or "未命名物品")[:255], "quantity": 1,
+                 "price_cny": seed_total if seed_total is not None else Decimal("0.00"), "auto": True}]
+    any_priced = any(it.price_cny is not None for it in items_in)
+    if not any_priced and seed_total is not None:
+        out = []
+        for i, it in enumerate(items_in):
+            if i == 0:
+                q = it.quantity or 1
+                unit = (Decimal(seed_total) / q).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
+                out.append({"name": it.name, "quantity": it.quantity, "price_cny": unit, "auto": True})
+            else:
+                out.append({"name": it.name, "quantity": it.quantity, "price_cny": Decimal("0.00"), "auto": True})
+        return out
+    # 有单价的原样用；没单价的记 0 并标 auto（灰显=待补价），避免误当作真实 ¥0
+    return [{"name": it.name, "quantity": it.quantity,
+             "price_cny": (it.price_cny if it.price_cny is not None else Decimal("0.00")),
+             "auto": (True if it.price_cny is None else bool(getattr(it, "auto", False)))}
+            for it in items_in]
 
 
 def not_found(name: str = "记录"):

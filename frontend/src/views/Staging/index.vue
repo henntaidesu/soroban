@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="bar">
-      <span class="hint">一个淘宝号下的所有订单都放这里（一单可多物），逐单点「导入」才进入账本。（将来爬虫自动灌入）</span>
+      <span class="hint">一个账号昵称下的所有订单都放这里（一单可多物），逐单点「导入」才进入账本。（将来爬虫自动灌入）</span>
     </div>
 
     <el-card>
@@ -11,7 +11,7 @@
           <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 130px" @change="reload">
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.taobao_account" placeholder="淘宝账号" clearable style="width: 130px" @change="reload" />
+          <el-input v-model="filters.taobao_account" placeholder="账号昵称" clearable style="width: 130px" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜订单号/商品" clearable style="width: 160px" @change="reload" />
         </template>
 
@@ -27,14 +27,17 @@
 
         <template #expand="{ row }">
           <div class="expand">
-            <div class="ex-title">物品明细（一单多物）</div>
-            <div v-for="(it, i) in row.items" :key="i" class="item-row">
-              <el-input v-model="it.name" size="small" placeholder="物品名" style="width: 180px" />
-              <el-input-number v-model="it.quantity" :min="1" size="small" />
+            <div class="ex-title">物品明细（一单多物）· 单价×数量汇总为订单价</div>
+            <div v-for="(it, i) in row.items" :key="i" class="item-row" :class="{ 'item-auto': it.auto }"
+                 :title="it.auto ? '系统自动生成/自动定价，编辑即覆盖' : ''">
+              <el-input v-model="it.name" size="small" placeholder="物品名" style="width: 180px" @change="it.auto = false" />
+              <el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" style="width: 80px" @change="it.auto = false" />
+              <el-input-number v-model="it.price_cny" :min="0" :precision="2" :controls="false" size="small"
+                               style="width: 110px" placeholder="单价" @change="it.auto = false" />
               <el-button link type="danger" :icon="Delete" @click="row.items.splice(i, 1)" />
             </div>
             <div>
-              <el-button size="small" :icon="Plus" @click="ensureItems(row).push({ name: '', quantity: 1 })">加物品</el-button>
+              <el-button size="small" :icon="Plus" @click="ensureItems(row).push({ name: '', quantity: 1, price_cny: null, auto: false })">加物品</el-button>
               <el-button size="small" type="primary" @click="saveItems(row)">保存物品</el-button>
             </div>
           </div>
@@ -69,10 +72,10 @@ import NotionTable from '@/components/NotionTable.vue'
 const COL_W = 110
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: COL_W },
-  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
   { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },   // 标题长：点开弹宽框看全
-  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
+  { key: 'price_cny', label: '人民币（元）', format: 'cny', readonly: true, width: COL_W },   // 由物品单价×数量派生
   { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
   { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
@@ -136,7 +139,9 @@ async function saveCell(row, key, value) {
 
 async function saveItems(row) {
   const items = (row.items || []).filter((it) => it.name && it.name.trim())
-    .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1 }))
+    .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1,
+                    price_cny: (it.price_cny === '' || it.price_cny == null) ? null : Number(it.price_cny),
+                    auto: !!it.auto }))
   try {
     const updated = await stagingApi.update(row.id, { version: row.version, items })
     Object.assign(row, updated)
@@ -194,4 +199,6 @@ onMounted(load)
 .expand { padding: 12px 20px; }
 .ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }
 .item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+/* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
+.item-row.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
 </style>

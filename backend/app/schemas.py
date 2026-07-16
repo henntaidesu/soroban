@@ -5,7 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from pydantic import field_validator
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 from .models import ShipmentStatus, Source, StagingStatus, TaobaoStatus
 
@@ -96,15 +96,35 @@ class LoginResponse(SQLModel):
 
 # --- 淘宝订单 ---------------------------------------------------------------
 
-class OrderItemIn(SQLModel):
+class ItemInBase(SQLModel):
+    """物品行输入（订单/暂存共用）。price_cny=单价（元）；订单价由 Σ(单价×数量) 派生。
+    auto 由客户端回传：未改动的「系统自动」项保持 True（前端灰显），用户一编辑即传 False。"""
     name: str
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1)   # 至少 1，防负/零数量算出负订单价
+    price_cny: Optional[Decimal] = None
+    auto: bool = False
+
+    @field_validator("price_cny")
+    @classmethod
+    def _q_item_price(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is None:
+            return None
+        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
+        if v < 0:
+            raise ValueError("物品单价不能为负数")
+        return v
+
+
+class OrderItemIn(ItemInBase):
+    pass
 
 
 class OrderItemRead(SQLModel):
     id: int
     name: str
     quantity: int
+    price_cny: Optional[Decimal] = None
+    auto: bool = False
 
 
 class TaobaoBase(MoneyIn):
@@ -327,15 +347,16 @@ class FxRead(SQLModel):
 
 # --- 淘宝抓取暂存（全部淘宝订单 → 确认导入）---------------------------------
 
-class StagingItemIn(SQLModel):
-    name: str
-    quantity: int = 1
+class StagingItemIn(ItemInBase):
+    pass
 
 
 class StagingItemRead(SQLModel):
     id: int
     name: str
     quantity: int
+    price_cny: Optional[Decimal] = None
+    auto: bool = False
 
 
 class StagingBase(SQLModel):

@@ -132,9 +132,10 @@ def run_migrations(url: str) -> None:
         if check_engine is not _control_engine and check_engine is not _data_engine:
             check_engine.dispose()
 
-    # 判 pre-Alembic 旧库时要排除控制表 app_db_config——它由 control.ensure_schema 常驻创建，
-    # 否则「全新业务库 + 已存在控制表」会被误判为旧库、错误 stamp 到 baseline 而不建表。
-    business_tables = tables - {"app_db_config", "alembic_version"}
+    # 判 pre-Alembic 旧库时要排除控制表（app_db_config / db_connection）——它们由 control.ensure_schema
+    # 常驻创建，否则「全新业务库 + 已存在控制表」会被误判为旧库、错误 stamp 到 baseline 而不建表
+    # （全新部署会因此建不出业务表而崩溃）。
+    business_tables = tables - {"app_db_config", "db_connection", "alembic_version"}
     if business_tables and "alembic_version" not in tables:
         base_rev = ScriptDirectory.from_config(cfg).get_base()
         command.stamp(cfg, base_rev)

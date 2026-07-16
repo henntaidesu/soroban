@@ -19,7 +19,7 @@
           <el-select v-model="filters.status" placeholder="状态" clearable style="width: 110px" @change="reload">
             <el-option v-for="s in TAOBAO_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.taobao_account" placeholder="淘宝号" clearable style="width: 110px" @change="reload" />
+          <el-input v-model="filters.taobao_account" placeholder="账号昵称" clearable style="width: 110px" @change="reload" />
           <el-input v-model="filters.express_no" placeholder="快递号" clearable style="width: 120px" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜订单号" clearable style="width: 140px" @change="reload" />
         </template>
@@ -60,12 +60,19 @@
               <colgroup>
                 <col class="c-name" />
                 <col class="c-qty" />
+                <col class="c-price" />
                 <col class="c-act" />
               </colgroup>
+              <thead>
+                <tr><th>物品名</th><th>数量</th><th>单价（元）</th><th></th></tr>
+              </thead>
               <tbody>
-                <tr v-for="(it, i) in (row.items || [])" :key="i">
-                  <td><el-input v-model="it.name" size="small" placeholder="物品名" @change="saveItems(row)" /></td>
-                  <td><el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" @change="saveItems(row)" /></td>
+                <tr v-for="(it, i) in (row.items || [])" :key="i" :class="{ 'item-auto': it.auto }"
+                    :title="it.auto ? '系统自动生成/自动定价，编辑即覆盖（变为已确认）' : ''">
+                  <td><el-input v-model="it.name" size="small" placeholder="物品名" @change="onItemEdit(row, it)" /></td>
+                  <td><el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" @change="onItemEdit(row, it)" /></td>
+                  <td><el-input-number v-model="it.price_cny" :min="0" :precision="2" :controls="false" size="small"
+                                       placeholder="单价" @change="onItemEdit(row, it)" /></td>
                   <td class="c-act"><el-button link type="danger" :icon="Delete" tabindex="-1" @click="removeItem(row, i)" /></td>
                 </tr>
                 <!-- 末尾草稿行：输入名称并失焦/回车即成为新物品并自动写库，随后又出现空行可继续录入 -->
@@ -73,10 +80,13 @@
                   <td><el-input v-model="drafts[row.id].name" size="small" placeholder="+ 新物品名，输入后自动保存"
                                 @change="commitDraft(row)" @keyup.enter="commitDraft(row)" /></td>
                   <td><el-input-number v-model="drafts[row.id].quantity" :min="1" :controls="false" size="small" /></td>
+                  <td><el-input-number v-model="drafts[row.id].price" :min="0" :precision="2" :controls="false"
+                                       size="small" placeholder="单价" @keyup.enter="commitDraft(row)" /></td>
                   <td class="c-act"></td>
                 </tr>
               </tbody>
             </table>
+            <div class="item-hint">订单人民币 = Σ(单价 × 数量)，自动汇总，不在列表直接改。灰色 = 系统自动生成，编辑即确认。</div>
           </div>
         </template>
 
@@ -124,7 +134,7 @@ const today = () => {
 const COL_W = 110
 const columns = [
   { key: 'date', label: '下单日期', type: 'date', width: COL_W },
-  { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
   { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
@@ -132,7 +142,7 @@ const columns = [
   { key: 'shipment_order_id', label: '集运订单', readonly: true, width: COL_W, placeholder: '选择' },
   { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: COL_W },
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: COL_W, placeholder: '实付日元' },
-  { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
+  { key: 'price_cny', label: '人民币（元）', format: 'cny', readonly: true, width: COL_W },   // 由物品单价×数量派生，改价走展开面板
   { key: 'fx_rate', label: '汇率', type: 'decimal', width: COL_W, placeholder: '当天汇率' },
   { key: 'express_company', label: '快递公司', type: 'text', width: COL_W, placeholder: '快递公司' },
   { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
@@ -148,7 +158,7 @@ const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
 const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
 const drafts = reactive({})   // { rowId: { name, quantity } } 每行末尾的「新物品」草稿输入
-function ensureDraft(id) { if (!drafts[id]) drafts[id] = { name: '', quantity: 1 } }
+function ensureDraft(id) { if (!drafts[id]) drafts[id] = { name: '', quantity: 1, price: null } }
 
 function shipById(id) { return shipmentOptions.value.find((j) => j.id === id) }
 function shipNo(id) { const j = shipById(id); return j ? (j.shipment_no || ('#' + id)) : ('#' + id) }
@@ -206,16 +216,22 @@ async function saveCell(row, key, value) {
   }
 }
 
+function itemPrice(v) { return (v === '' || v === null || v === undefined) ? null : Number(v) }
+
 async function saveItems(row) {
   const items = (row.items || []).filter((it) => it.name && it.name.trim())
-    .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1 }))
+    .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1,
+                    price_cny: itemPrice(it.price_cny), auto: !!it.auto }))
   try {
     const updated = await taobaoApi.update(row.id, { version: row.version, items })
-    Object.assign(row, updated)   // 自动保存：静默写库，不弹提示
+    Object.assign(row, updated)   // 自动保存：静默写库，不弹提示（返回派生的订单价 + 物品）
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
   }
 }
+
+// 编辑任一物品字段 → 该物品转为「已确认」(auto=false，去灰) 并写库
+function onItemEdit(row, it) { it.auto = false; saveItems(row) }
 
 // 删除某物品：二次确认后再移除并写库
 async function removeItem(row, i) {
@@ -227,12 +243,13 @@ async function removeItem(row, i) {
   saveItems(row)
 }
 
-// 末尾草稿录入完成：转为正式物品、清空草稿、自动写库；随后草稿行再次出现可继续录入
+// 末尾草稿录入完成：转为正式物品(auto=false)、清空草稿、自动写库；随后草稿行再次出现可继续录入
 async function commitDraft(row) {
   const d = drafts[row.id]
   if (!d || !d.name || !d.name.trim()) return
-  ensureItems(row).push({ name: d.name.trim(), quantity: Number(d.quantity) || 1 })
-  drafts[row.id] = { name: '', quantity: 1 }
+  ensureItems(row).push({ name: d.name.trim(), quantity: Number(d.quantity) || 1,
+                          price_cny: itemPrice(d.price), auto: false })
+  drafts[row.id] = { name: '', quantity: 1, price: null }
   await saveItems(row)
 }
 
@@ -489,12 +506,17 @@ onBeforeUnmount(() => {
 .expand { padding: 12px 20px; }
 /* 二级子表格：视觉与一级列表(NotionTable)一致——同样的边框、行高与悬停；无表头 */
 .item-tbl { border-collapse: collapse; font-size: 13px; color: #d6deea; table-layout: fixed; }
-.item-tbl col.c-name { width: 260px; }
-.item-tbl col.c-qty { width: 110px; }
-.item-tbl col.c-act { width: 64px; }
+.item-tbl col.c-name { width: 240px; }
+.item-tbl col.c-qty { width: 90px; }
+.item-tbl col.c-price { width: 120px; }
+.item-tbl col.c-act { width: 56px; }
+.item-tbl thead th { height: 30px; font-weight: 500; color: #7d8aa3; text-align: left; padding: 0 10px; border-bottom: 1px solid #28354a; }
 .item-tbl td { height: 36px; padding: 0; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
 .item-tbl tbody tr:hover td { background: #1b2942; }
 .item-tbl td.c-act { text-align: center; }
+/* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
+.item-tbl tr.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
+.item-hint { margin-top: 6px; color: #6b7488; font-size: 12px; }
 /* 单元格内输入做成无边框，贴合一级列表的扁平格子观感 */
 .item-tbl :deep(.el-input__wrapper),
 .item-tbl :deep(.el-input-number .el-input__wrapper) {

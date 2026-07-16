@@ -65,6 +65,18 @@ EXCLUDED_STATUSES = {
 }
 
 
+def price_from_items(items) -> Decimal:
+    """订单/暂存的人民币总价 = Σ(物品单价 × 数量)，量化到分。空价按 0。
+
+    系统的最小单位是「物品(OrderItem/StagingItem)」：物品带单价(price_cny)与数量(quantity)，
+    订单价由此派生、不再直接编辑（见各 model 的 sync_from_items 与 README「物品为最小单位」）。"""
+    total = sum(
+        (Decimal(it.price_cny or 0) * (it.quantity or 1) for it in items),
+        Decimal("0"),
+    )
+    return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 # --- 共通基类：日期/备注/来源/付款人/乐观锁/软删/时间戳 + 金额输入与派生 --------
 
 class LedgerBase(SQLModel):

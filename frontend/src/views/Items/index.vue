@@ -8,14 +8,18 @@
       <NotionTable :columns="columns" :rows="rows" :loading="loading" :actions-width="60"
                    table-name="items" hide-id :addable="false" :deletable="false" @reload="load">
         <template #toolbar>
-          <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 120px" @change="reload">
-            <el-option v-for="s in ORDER_STATUS" :key="s" :label="s" :value="s" />
-          </el-select>
-          <el-select v-model="filters.platform" placeholder="全部来源" clearable style="width: 110px" @change="reload">
+          <el-input v-model="filters.q" placeholder="搜物品/商品/单号/快递号" clearable style="width: 200px" @change="reload" />
+          <el-select v-model="filters.platform" placeholder="来源" clearable style="width: 120px" @change="reload">
             <el-option v-for="p in ORDER_SOURCES" :key="p" :label="p" :value="p" />
           </el-select>
-          <el-input v-model="filters.platform_account" placeholder="账号" clearable style="width: 120px" @change="reload" />
-          <el-input v-model="filters.q" placeholder="搜物品/订单号/商品" clearable style="width: 180px" @change="reload" />
+          <el-select v-model="filters.status" placeholder="状态" clearable style="width: 120px" @change="reload">
+            <el-option v-for="s in ORDER_STATUS" :key="s" :label="s" :value="s" />
+          </el-select>
+          <el-select v-model="filters.platform_account" placeholder="账号昵称" clearable filterable style="width: 120px" @change="reload">
+            <el-option v-for="a in accountOptions" :key="a" :label="a" :value="a" />
+          </el-select>
+          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
+                          start-placeholder="起" end-placeholder="止" @change="reload" />
         </template>
 
         <!-- 彩色标签（只读），配色与订单列表一致：账号用持久化色序、来源/状态用语义色 -->
@@ -88,7 +92,7 @@ const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
-const filters = reactive({ status: '', platform: '', platform_account: '', q: '' })
+const filters = reactive({ q: '', platform: '', status: '', platform_account: '', range: null })
 
 // 账号标签的持久化配色（与其它页同一套色序，保证同一账号处处同色）+ 账号候选（编辑弹窗下拉用）
 const acctColor = reactive({})
@@ -105,10 +109,11 @@ async function load() {
   loading.value = true
   try {
     const params = { limit: pageSize, offset: (page.value - 1) * pageSize }
-    if (filters.status) params.status = filters.status
-    if (filters.platform) params.platform = filters.platform
-    if (filters.platform_account) params.platform_account = filters.platform_account
     if (filters.q) params.q = filters.q
+    if (filters.platform) params.platform = filters.platform
+    if (filters.status) params.status = filters.status
+    if (filters.platform_account) params.platform_account = filters.platform_account
+    if (filters.range) { params.date_from = filters.range[0]; params.date_to = filters.range[1] }
     const res = await itemsApi.list(params)
     rows.value = res.items
     total.value = res.total

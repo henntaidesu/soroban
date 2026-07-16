@@ -57,6 +57,7 @@ def list_orders(
     date_from: Optional[dt.date] = None,
     date_to: Optional[dt.date] = None,
     status: Optional[str] = None,
+    platform: Optional[str] = None,
     platform_account: Optional[str] = None,
     express_no: Optional[str] = None,
     shipment_order_id: Optional[int] = None,
@@ -77,6 +78,8 @@ def list_orders(
         conds.append(Order.date <= date_to)
     if status:
         conds.append(Order.status == status)
+    if platform:
+        conds.append(Order.platform == platform)
     if platform_account:
         conds.append(Order.platform_account == platform_account)
     if express_no:
@@ -85,8 +88,13 @@ def list_orders(
         conds.append(Order.shipment_order_id == shipment_order_id)
     if order_no:
         conds.append(Order.order_no == order_no)   # 精确：OCR 去重靠它，不受子串 q 的 20 条上限影响
-    if q:
-        conds.append(Order.order_no.contains(q, autoescape=True))
+    if q:   # 统一模糊搜：物品名 / 商品标题 / 订单号 / 快递号（物品名用 EXISTS 子查询，不重复行）
+        conds.append(
+            Order.order_no.contains(q, autoescape=True)
+            | Order.shop.contains(q, autoescape=True)
+            | Order.express_no.contains(q, autoescape=True)
+            | Order.items.any(OrderItem.name.contains(q, autoescape=True))
+        )
 
     total = session.exec(select(func.count()).select_from(Order).where(*conds)).one()
     rows = session.exec(

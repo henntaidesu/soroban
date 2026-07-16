@@ -8,11 +8,18 @@
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
                    table-name="staging" :actions-width="128" @save="saveCell" @add="addRow" @delete="doDelete" @reload="load">
         <template #toolbar>
-          <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 130px" @change="reload">
+          <el-input v-model="filters.q" placeholder="搜物品/商品/单号/快递号" clearable style="width: 200px" @change="reload" />
+          <el-select v-model="filters.platform" placeholder="来源" clearable style="width: 120px" @change="reload">
+            <el-option v-for="p in ORDER_SOURCES" :key="p" :label="p" :value="p" />
+          </el-select>
+          <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 120px" @change="reload">
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.platform_account" placeholder="账号昵称" clearable style="width: 130px" @change="reload" />
-          <el-input v-model="filters.q" placeholder="搜订单号/商品" clearable style="width: 160px" @change="reload" />
+          <el-select v-model="filters.platform_account" placeholder="账号昵称" clearable filterable style="width: 120px" @change="reload">
+            <el-option v-for="a in accountOptions" :key="a" :label="a" :value="a" />
+          </el-select>
+          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
+                          start-placeholder="起" end-placeholder="止" @change="reload" />
         </template>
 
         <template #cell-scraped_at="{ row }">
@@ -70,8 +77,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
-import { stagingApi } from '@/api'
-import { STAGING_STATUS, ORDER_STATUS, stagingStyle } from '@/constants'
+import { stagingApi, tagsApi } from '@/api'
+import { ORDER_SOURCES, STAGING_STATUS, ORDER_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 // 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
@@ -97,7 +104,11 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
 // 默认只看「待处理」（抓进来待逐单导入的）；清空筛选或切状态即可看全部/已导入/已忽略
-const filters = reactive({ status: '待处理', platform_account: '', q: '' })
+const filters = reactive({ q: '', platform: '', status: '待处理', platform_account: '', range: null })
+const accountOptions = ref([])   // 账号昵称下拉候选（标签接口）
+async function loadAccounts() {
+  try { accountOptions.value = (await tagsApi.list('platform_account')).map((t) => t.value) } catch (_) { /* 已提示 */ }
+}
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
@@ -125,9 +136,11 @@ async function load() {
   loading.value = true
   try {
     const params = { limit: pageSize, offset: (page.value - 1) * pageSize }
+    if (filters.q) params.q = filters.q
+    if (filters.platform) params.platform = filters.platform
     if (filters.status) params.status = filters.status
     if (filters.platform_account) params.platform_account = filters.platform_account
-    if (filters.q) params.q = filters.q
+    if (filters.range) { params.date_from = filters.range[0]; params.date_to = filters.range[1] }
     const res = await stagingApi.list(params)
     rows.value = res.items
     total.value = res.total
@@ -215,7 +228,7 @@ async function doDelete(row) {
   } catch (_) { /* 拦截器已提示 */ }
 }
 
-onMounted(load)
+onMounted(() => { loadAccounts(); load() })
 </script>
 
 <style scoped>

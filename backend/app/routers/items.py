@@ -45,11 +45,12 @@ def list_items(
         conds.append(Order.platform_account == platform_account)
     if platform:
         conds.append(Order.platform == platform)
-    if q:
+    if q:   # 统一模糊搜：物品名 / 商品标题 / 订单号 / 快递号
         conds.append(
             OrderItem.name.contains(q, autoescape=True)
             | Order.order_no.contains(q, autoescape=True)
             | Order.shop.contains(q, autoescape=True)
+            | Order.express_no.contains(q, autoescape=True)
         )
 
     join = (OrderItem, Order.id == OrderItem.order_id)

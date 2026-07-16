@@ -79,20 +79,31 @@ def _read(session: Session, row: OrderStaging) -> StagingRead:
 def list_staging(
     session: Session = Depends(get_session),
     status: Optional[str] = None,
+    platform: Optional[str] = None,
     platform_account: Optional[str] = None,
-    q: Optional[str] = Query(None, description="按订单号/店铺搜索"),
+    date_from: Optional[dt.date] = None,
+    date_to: Optional[dt.date] = None,
+    q: Optional[str] = Query(None, description="模糊搜：物品名/商品标题/订单号/快递号"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     conds = []
     if status:
         conds.append(OrderStaging.status == status)
+    if platform:
+        conds.append(OrderStaging.platform == platform)
     if platform_account:
         conds.append(OrderStaging.platform_account == platform_account)
-    if q:
+    if date_from:
+        conds.append(OrderStaging.order_date >= date_from)
+    if date_to:
+        conds.append(OrderStaging.order_date <= date_to)
+    if q:   # 统一模糊搜：物品名 / 商品标题 / 订单号 / 快递号（物品名用 EXISTS 子查询，不重复行）
         conds.append(
-            (OrderStaging.order_no.contains(q, autoescape=True))
-            | (OrderStaging.shop.contains(q, autoescape=True))
+            OrderStaging.order_no.contains(q, autoescape=True)
+            | OrderStaging.shop.contains(q, autoescape=True)
+            | OrderStaging.express_no.contains(q, autoescape=True)
+            | OrderStaging.items.any(StagingItem.name.contains(q, autoescape=True))
         )
     total = session.exec(select(func.count()).select_from(OrderStaging).where(*conds)).one()
     rows = session.exec(

@@ -14,14 +14,18 @@
           <el-tag v-if="focusId" type="warning" closable disable-transitions class="focus-chip" @close="clearFocus">
             定位订单 #{{ focusId }} · 点 × 看全部
           </el-tag>
-          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
-                          start-placeholder="起" end-placeholder="止" @change="reload" />
-          <el-select v-model="filters.status" placeholder="状态" clearable style="width: 110px" @change="reload">
+          <el-input v-model="filters.q" placeholder="搜物品/商品/单号/快递号" clearable style="width: 200px" @change="reload" />
+          <el-select v-model="filters.platform" placeholder="来源" clearable style="width: 120px" @change="reload">
+            <el-option v-for="p in ORDER_SOURCES" :key="p" :label="p" :value="p" />
+          </el-select>
+          <el-select v-model="filters.status" placeholder="状态" clearable style="width: 120px" @change="reload">
             <el-option v-for="s in ORDER_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.platform_account" placeholder="账号昵称" clearable style="width: 110px" @change="reload" />
-          <el-input v-model="filters.express_no" placeholder="快递号" clearable style="width: 120px" @change="reload" />
-          <el-input v-model="filters.q" placeholder="搜订单号" clearable style="width: 140px" @change="reload" />
+          <el-select v-model="filters.platform_account" placeholder="账号昵称" clearable filterable style="width: 120px" @change="reload">
+            <el-option v-for="a in accountOptions" :key="a" :label="a" :value="a" />
+          </el-select>
+          <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
+                          start-placeholder="起" end-placeholder="止" @change="reload" />
         </template>
 
         <template #cell-shipment_order_id="{ row }">
@@ -88,8 +92,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Camera, Check } from '@element-plus/icons-vue'
-import { shipmentApi, ordersApi } from '@/api'
-import { ORDER_STATUS, statusStyle } from '@/constants'
+import { shipmentApi, ordersApi, tagsApi } from '@/api'
+import { ORDER_SOURCES, ORDER_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
@@ -125,8 +129,12 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
 const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
-const filters = reactive({ range: null, status: '', platform_account: '', express_no: '', q: '' })
+const filters = reactive({ q: '', platform: '', status: '', platform_account: '', range: null })
 const shipmentOptions = ref([])
+const accountOptions = ref([])   // 账号昵称下拉候选（标签接口）
+async function loadAccounts() {
+  try { accountOptions.value = (await tagsApi.list('platform_account')).map((t) => t.value) } catch (_) { /* 已提示 */ }
+}
 
 function shipById(id) { return shipmentOptions.value.find((j) => j.id === id) }
 function shipNo(id) { const j = shipById(id); return j ? (j.shipment_no || ('#' + id)) : ('#' + id) }
@@ -155,11 +163,11 @@ async function load() {
   loading.value = true
   try {
     const params = { limit: pageSize, offset: (page.value - 1) * pageSize }
-    if (filters.range) { params.date_from = filters.range[0]; params.date_to = filters.range[1] }
+    if (filters.q) params.q = filters.q
+    if (filters.platform) params.platform = filters.platform
     if (filters.status) params.status = filters.status
     if (filters.platform_account) params.platform_account = filters.platform_account
-    if (filters.express_no) params.express_no = filters.express_no
-    if (filters.q) params.q = filters.q
+    if (filters.range) { params.date_from = filters.range[0]; params.date_to = filters.range[1] }
     if (focusId.value) params.id = focusId.value          // 跳转定位：隔离显示该单
     const res = await ordersApi.list(params)
     rows.value = res.items
@@ -392,6 +400,7 @@ function clearFocus() { router.replace({ path: '/orders', query: {} }) }
 
 onMounted(() => {
   loadShipment()
+  loadAccounts()
   window.addEventListener('dragenter', onWinDragEnter)
   window.addEventListener('dragover', onWinDragOver)
   window.addEventListener('dragleave', onWinDragLeave)

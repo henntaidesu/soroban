@@ -78,14 +78,48 @@ def _find(plugin_id: str) -> dict:
     raise HTTPException(status_code=404, detail=f"未发现插件: {plugin_id}")
 
 
-def _accounts(cfg: Optional[PluginConfig]) -> list[str]:
+def _load_params(cfg: Optional[PluginConfig]) -> dict:
     if not cfg:
-        return []
+        return {}
     try:
-        raw = json.loads(cfg.params_json).get("accounts", "")
-    except Exception:
-        raw = ""
-    return [a.strip() for a in str(raw).split(",") if a.strip()]
+        return json.loads(cfg.params_json)
+    except Exception:                                   # params_json 被手改坏也不 500
+        return {}
+
+
+def _account_list(cfg: Optional[PluginConfig]) -> list[dict]:
+    """结构化账号 [{name, platform, enabled}]。platform 加账号时定、之后不可改；enabled=False 即暂停。
+    兼容旧格式「accounts 是逗号字符串 + 顶层 platform」——读时转成结构化（各账号沿用旧顶层平台）。"""
+    params = _load_params(cfg)
+    raw = params.get("accounts")
+    if isinstance(raw, list):
+        out = []
+        for a in raw:
+            name = str(a.get("name", "")).strip() if isinstance(a, dict) else ""
+            if name:
+                out.append({
+                    "name": name,
+                    "platform": (str(a.get("platform", "")).strip() or "淘宝"),
+                    "enabled": bool(a.get("enabled", True)),
+                })
+        return out
+    default_platform = str(params.get("platform", "")).strip() or "淘宝"   # 旧格式顶层平台
+    return [{"name": n.strip(), "platform": default_platform, "enabled": True}
+            for n in str(raw or "").split(",") if n.strip()]
+
+
+def _account_names(cfg: Optional[PluginConfig]) -> list[str]:
+    return [a["name"] for a in _account_list(cfg)]
+
+
+def _save_accounts(session: Session, cfg: PluginConfig, accounts: list[dict]) -> None:
+    """把结构化账号写回 params_json（顺带清掉旧的顶层 platform）。**不提交**，由调用方 commit。"""
+    params = _load_params(cfg)
+    params["accounts"] = accounts
+    params.pop("platform", None)
+    cfg.params_json = json.dumps(params, ensure_ascii=False)
+    cfg.updated_at = utcnow()
+    session.add(cfg)
 
 
 def _authorized(manifest: dict, account: str) -> bool:
@@ -103,13 +137,30 @@ def _state_accounts(manifest: dict) -> list[str]:
     return sorted(f.stem for f in d.glob("*.json"))
 
 
-def _merge_accounts(cfg: Optional[PluginConfig], manifest: dict) -> list[str]:
-    """配置里的账号 ∪ 磁盘上已有会话的账号（配置的在前、去重）。"""
-    accts = _accounts(cfg)
-    for a in _state_accounts(manifest):
-        if a not in accts:
-            accts.append(a)
-    return accts
+def _known_names(cfg: Optional[PluginConfig], manifest: dict) -> list[str]:
+    """配置账号名 ∪ 磁盘会话名（配置在前、去重）。供校验与单账号抓取。"""
+    names = _account_names(cfg)
+    for n in _state_accounts(manifest):
+        if n not in names:
+            names.append(n)
+    return names
+
+
+def _display_accounts(cfg: Optional[PluginConfig], manifest: dict) -> list[dict]:
+    """展示用账号列表：配置账号（结构化，含平台/启用）+ 磁盘有会话但不在配置里的孤儿（configured=false）。"""
+    accs = _account_list(cfg)
+    names = {a["name"] for a in accs}
+    out = [{
+        "account": a["name"], "platform": a["platform"], "enabled": a["enabled"],
+        "configured": True, "authorized": _authorized(manifest, a["name"]),
+    } for a in accs]
+    for n in _state_accounts(manifest):                 # 磁盘残留会话：DB 重置/换机后仍可见、可复用
+        if n not in names:
+            out.append({
+                "account": n, "platform": None, "enabled": False,
+                "configured": False, "authorized": _authorized(manifest, n),
+            })
+    return out
 
 
 def _state_file(manifest: dict, account: str) -> Path:
@@ -173,41 +224,74 @@ def list_plugins(session: Session = Depends(get_session)):
     out = []
     for m in discover():
         cfg = session.get(PluginConfig, m["id"])
-        try:
-            params = json.loads(cfg.params_json) if cfg else {}
-        except Exception:                               # params_json 被手改坏也不 500
-            params = {}
-        configured = _accounts(cfg)
-        accts = _merge_accounts(cfg, m)
         out.append({
             "id": m["id"], "name": m.get("name", m["id"]), "version": m.get("version"),
-            "params": m.get("params", []),
             "installed": _python(m).exists(),
             "config": {
                 "enabled": bool(cfg.enabled) if cfg else False,
-                "params": params,
                 "schedule_minutes": cfg.schedule_minutes if cfg else 0,
                 "last_run_at": cfg.last_run_at if cfg else None,
             },
-            "accounts": [
-                {"account": a, "authorized": _authorized(m, a), "configured": a in configured}
-                for a in accts
-            ],
+            "accounts": _display_accounts(cfg, m),
         })
     return out
 
 
 @router.put("/{plugin_id}/config")
 def save_config(plugin_id: str, payload: PluginConfigIn, session: Session = Depends(get_session)):
+    """只存插件级设置：启用定时 + 定时间隔。账号（昵称/平台/启用）走专用增删改端点，这里不碰。"""
     _find(plugin_id)                                    # 确认插件存在
     cfg = session.get(PluginConfig, plugin_id) or PluginConfig(plugin_id=plugin_id)
     cfg.enabled = payload.enabled
-    cfg.params_json = json.dumps(payload.params, ensure_ascii=False)
     cfg.schedule_minutes = max(0, payload.schedule_minutes)
     cfg.updated_at = utcnow()
     session.add(cfg)
     session.commit()
     return {"ok": True}
+
+
+@router.post("/{plugin_id}/account")
+def add_account(
+    plugin_id: str,
+    name: str = Query(..., description="账号昵称"),
+    platform: str = Query("淘宝", description="导入平台（加时定，之后不可改）"),
+    session: Session = Depends(get_session),
+):
+    """添加一个账号：绑定昵称 + 平台（写一次即锁定），默认启用。之后在下面列表登录授权。"""
+    m = _find(plugin_id)
+    name = name.strip()
+    if not name or "," in name:
+        raise HTTPException(status_code=400, detail="账号昵称不能为空、且不能含逗号。")
+    _state_file(m, name)                                # 合法文件名校验（会话文件按此名存）
+    cfg = session.get(PluginConfig, plugin_id) or PluginConfig(plugin_id=plugin_id)
+    accs = _account_list(cfg)
+    if any(a["name"] == name for a in accs):
+        raise HTTPException(status_code=409, detail=f"账号已存在：{name}")
+    accs.append({"name": name, "platform": (platform or "").strip() or "淘宝", "enabled": True})
+    _save_accounts(session, cfg, accs)
+    session.commit()
+    return {"ok": True}
+
+
+@router.patch("/{plugin_id}/account")
+def set_account_enabled(
+    plugin_id: str,
+    account: str = Query(..., description="账号昵称"),
+    enabled: bool = Query(..., description="是否启用（未启用=定时/全部抓取都跳过）"),
+    session: Session = Depends(get_session),
+):
+    """启用/停用某账号。停用后定时与「抓取全部账号」都跳过它（仍可单独「抓这个号」）。"""
+    _find(plugin_id)
+    cfg = session.get(PluginConfig, plugin_id)
+    accs = _account_list(cfg)
+    if not any(a["name"] == account for a in accs):
+        raise HTTPException(status_code=404, detail=f"该插件下没有账号：{account}")
+    for a in accs:
+        if a["name"] == account:
+            a["enabled"] = enabled
+    _save_accounts(session, cfg, accs)
+    session.commit()
+    return {"ok": True, "enabled": enabled}
 
 
 @router.post("/{plugin_id}/login")
@@ -225,12 +309,18 @@ def fetch(
 ):
     m = _find(plugin_id)
     cfg = session.get(PluginConfig, plugin_id)
-    accts = [account] if account else _merge_accounts(cfg, m)   # 不填账号=抓「配置 ∪ 磁盘已授权」的全部
-    if not accts:
-        raise HTTPException(status_code=400, detail="没有账号可抓：先在插件配置里填账号。")
+    by_name = {a["name"]: a for a in _account_list(cfg)}
+    if account:                                          # 单账号：手动抓，忽略「启用」；孤儿(磁盘授权未配置)按缺省淘宝
+        targets = [by_name.get(account) or {"name": account, "platform": "淘宝", "enabled": True}]
+    else:                                                # 全部：只抓「已启用」的配置账号
+        targets = [a for a in _account_list(cfg) if a["enabled"]]
+    if not targets:
+        raise HTTPException(status_code=400, detail="没有可抓的账号：先添加账号并启用。")
     token = create_access_token(current, dt.timedelta(minutes=30))   # 真·短期 token（30min，够抓一次），走环境变量不进 argv
-    pids = [_launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token) for a in accts]
-    return {"started": True, "accounts": accts, "pids": pids}
+    pids = [_launch(m, "fetch",
+                    ["--account", a["name"], "--soroban-url", _SELF_URL, "--platform", a["platform"]],
+                    token=token) for a in targets]       # 平台按每个账号各自绑定的来源下发
+    return {"started": True, "accounts": [a["name"] for a in targets], "pids": pids}
 
 
 @router.delete("/{plugin_id}/account")
@@ -242,18 +332,12 @@ def delete_account(
     """注销某账号：删掉磁盘登录会话，并从插件配置的账号列表里移除。"""
     m = _find(plugin_id)
     cfg = session.get(PluginConfig, plugin_id)
-    if account not in _merge_accounts(cfg, m):
+    if account not in _known_names(cfg, m):
         raise HTTPException(status_code=404, detail=f"该插件下没有账号：{account}")
     removed = _remove_account_state(m, account)                 # 删磁盘会话（含 .tmp/.lock）
-    if cfg and account in _accounts(cfg):                       # 再从配置账号串里摘掉它
-        try:
-            params = json.loads(cfg.params_json)
-        except Exception:
-            params = {}
-        params["accounts"] = ",".join(a for a in _accounts(cfg) if a != account)
-        cfg.params_json = json.dumps(params, ensure_ascii=False)
-        cfg.updated_at = utcnow()
-        session.add(cfg)
+    accs = _account_list(cfg)
+    if cfg and any(a["name"] == account for a in accs):         # 再从配置账号列表里摘掉它
+        _save_accounts(session, cfg, [a for a in accs if a["name"] != account])
         session.commit()
     return {"ok": True, "removed_session": removed}
 
@@ -276,24 +360,21 @@ def rename_account(
     _state_file(m, new)                                     # 校验 new 是合法文件名（目录穿越/非法名 → 400）
     cfg = session.get(PluginConfig, plugin_id)
     # old 有效 = 配置/磁盘里的账号，或历史数据/标签里出现过（列头改名可能改一个只存在于旧订单的账号）
-    if old not in _merge_accounts(cfg, m) and not tag_value_in_use(session, "taobao_account", old):
+    if old not in _known_names(cfg, m) and not tag_value_in_use(session, "taobao_account", old):
         raise HTTPException(status_code=404, detail=f"没有这个账号：{old}")
     if new == old:
         return {"ok": True, "unchanged": True}
-    if new in _merge_accounts(cfg, m) or tag_value_in_use(session, "taobao_account", new):
+    if new in _known_names(cfg, m) or tag_value_in_use(session, "taobao_account", new):
         raise HTTPException(status_code=409, detail=f"新名字已被占用（已有账号/数据/授权）：{new}")
-    # 1) 一个事务：数据 + 标签 + 配置一起改
+    # 1) 一个事务：数据 + 标签 + 配置一起改（只改昵称，平台/启用保留）
     raw = rename_tag_value(session, "taobao_account", old, new)
     counts = {"staging": raw.get("TaobaoStaging", 0), "orders": raw.get("TaobaoOrder", 0)}
-    if cfg and old in _accounts(cfg):
-        try:
-            params = json.loads(cfg.params_json)
-        except Exception:
-            params = {}
-        params["accounts"] = ",".join(new if a == old else a for a in _accounts(cfg))
-        cfg.params_json = json.dumps(params, ensure_ascii=False)
-        cfg.updated_at = utcnow()
-        session.add(cfg)
+    accs = _account_list(cfg)
+    if cfg and any(a["name"] == old for a in accs):
+        for a in accs:
+            if a["name"] == old:
+                a["name"] = new
+        _save_accounts(session, cfg, accs)
     session.commit()
     # 2) 提交后再搬会话文件（DB 已一致；万一搬失败只影响授权显示，可在新名下重登恢复）
     try:
@@ -310,7 +391,7 @@ def _require_taobao_account(m: dict, session: Session, account: str) -> None:
     if m.get("platform") != "taobao":
         raise HTTPException(status_code=400, detail="该插件不支持按账号删除订单。")
     cfg = session.get(PluginConfig, m["id"])
-    if account not in _merge_accounts(cfg, m) and not tag_value_in_use(session, "taobao_account", account):
+    if account not in _known_names(cfg, m) and not tag_value_in_use(session, "taobao_account", account):
         raise HTTPException(status_code=404, detail=f"没有这个账号：{account}")
 
 
@@ -366,12 +447,16 @@ def _run_due(session: Session) -> None:
             continue
         token = token or create_access_token(user, dt.timedelta(minutes=30))
         launched = 0
-        for a in _accounts(cfg):
+        for a in _account_list(cfg):
+            if not a["enabled"]:                        # 停用的账号：定时跳过
+                continue
             try:
-                _launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token)
+                _launch(m, "fetch",
+                        ["--account", a["name"], "--soroban-url", _SELF_URL, "--platform", a["platform"]],
+                        token=token)
                 launched += 1
             except HTTPException as e:
-                log.warning("定时抓取 %s/%s 启动失败：%s", cfg.plugin_id, a, e.detail)
+                log.warning("定时抓取 %s/%s 启动失败：%s", cfg.plugin_id, a["name"], e.detail)
         if launched:                                    # 只有真的起了进程才推进 last_run_at
             cfg.last_run_at = now                       # 空账号/全部启动失败 → 不推进，下轮重试
             session.add(cfg)

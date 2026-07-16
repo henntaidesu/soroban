@@ -39,6 +39,7 @@ _SHARED_TO_ORDER = {
     "taobao_account": "taobao_account",
     "platform": "platform",
     "express_no": "express_no",
+    "postage_cny": "postage_cny",
     "fx_rate": "fx_rate",
     "order_status": "status",
 }
@@ -63,6 +64,7 @@ def _read(session: Session, row: TaobaoStaging) -> StagingRead:
         data.taobao_account = order.taobao_account
         data.express_no = order.express_no
         data.price_cny = order.price_cny
+        data.postage_cny = order.postage_cny
         data.fx_rate = order.fx_rate
         data.order_status = order.status
         data.items = [
@@ -110,9 +112,10 @@ def create_staging(payload: StagingCreate, session: Session = Depends(get_sessio
     row = TaobaoStaging(**payload.model_dump(exclude={"items", "price_cny"}))  # 价由物品派生
     if row.fx_rate is None:                  # 按下单日期匹配汇率；无记录则退回当前(入库当天)汇率
         row.fx_rate = rate_for_date(session, row.order_date)
-    # 最小单位是物品：至少 1 条（无物品则按商品名+订单价自动生成，灰显可改）
-    row.items = [StagingItem(**d) for d in build_items(payload.items, payload.price_cny, payload.shop)]
-    row.sync_from_items()                    # price_cny = Σ(单价×数量)
+    # 最小单位是物品：至少 1 条。播种用「货款」= 种子价 - 邮费，避免邮费摊进单价再被 sync 重复计
+    seed_goods = (payload.price_cny - (payload.postage_cny or 0)) if payload.price_cny is not None else None
+    row.items = [StagingItem(**d) for d in build_items(payload.items, seed_goods, payload.shop)]
+    row.sync_from_items()                    # price_cny = Σ(单价×数量) + 邮费
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -143,7 +146,8 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
                 row.status = value
         if payload.items is not None:                   # 物品写穿账本（单一真源）+ 暂存镜像，两页一致
             seed = payload.price_cny if payload.price_cny is not None else order.price_cny
-            built = build_items(payload.items, seed, order.shop)
+            seed_goods = (seed - (order.postage_cny or 0)) if seed is not None else None
+            built = build_items(payload.items, seed_goods, order.shop)
             order.items = [OrderItem(**d) for d in built]
             row.items = [StagingItem(**d) for d in built]
         order.sync_from_items()                         # 账本价+日元由物品派生（fx 变也重算）
@@ -158,9 +162,10 @@ def update_staging(row_id: int, payload: StagingUpdate, session: Session = Depen
     for key, value in data.items():
         setattr(row, key, value)
     if payload.items is not None:                       # 给了 items 就整体替换（[] → 自动补 1 条占位）
-        # seed 兜底：爬虫重抓未导入行时只带订单总价、物品无单价 → 优先总价、缺失则用当前价重播种，绝不清零
+        # seed 兜底（货款口径）：物品无单价时用「当前价 - 邮费」重播种，绝不清零、也不重复计邮费
         seed = payload.price_cny if payload.price_cny is not None else row.price_cny
-        row.items = [StagingItem(**d) for d in build_items(payload.items, seed, row.shop)]
+        seed_goods = (seed - (row.postage_cny or 0)) if seed is not None else None
+        row.items = [StagingItem(**d) for d in build_items(payload.items, seed_goods, row.shop)]
     row.sync_from_items()
     session.add(row)
     session.commit()
@@ -213,6 +218,7 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         taobao_account=row.taobao_account,
         platform=row.platform,               # 来源随单迁移到账本
         express_no=row.express_no,
+        postage_cny=row.postage_cny,         # 邮费随单迁移
         fx_rate=row.fx_rate or rate_for_date(session, row.order_date),  # 优先暂存记录的汇率；否则按下单日期匹配
         status=row.order_status or TaobaoStatus.paid.value,   # 订单状态一同迁移
         source=Source.imported.value,
@@ -222,7 +228,9 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         order.items = [OrderItem(name=it.name, quantity=it.quantity, price_cny=it.price_cny, auto=it.auto)
                        for it in row.items]
     else:
-        order.items = [OrderItem(**d) for d in build_items([], row.price_cny, row.shop)]
+        # 0 物品兜底：种子用货款(总价-邮费)，避免 sync 再加邮费重复计（对齐其它 build_items 站点）
+        seed_goods = (row.price_cny - (row.postage_cny or 0)) if row.price_cny is not None else None
+        order.items = [OrderItem(**d) for d in build_items([], seed_goods, row.shop)]
     order.sync_from_items()
     session.add(order)
     session.flush()                             # 拿到 order.id

@@ -86,7 +86,13 @@
                 </tr>
               </tbody>
             </table>
-            <div class="item-hint">订单人民币 = Σ(单价 × 数量)，自动汇总，不在列表直接改。灰色 = 系统自动生成，编辑即确认。</div>
+            <div class="postage-row">
+              <span class="postage-lb">邮费（元）</span>
+              <el-input-number v-model="row.postage_cny" :min="0" :precision="2" :controls="false" size="small"
+                               placeholder="包邮" style="width: 130px" @change="savePostage(row)" />
+              <span class="postage-hint">不填 = 包邮</span>
+            </div>
+            <div class="item-hint">订单人民币 = Σ(单价 × 数量) + 邮费，自动汇总，不在列表直接改。灰色 = 系统自动生成，编辑即确认。</div>
           </div>
         </template>
 
@@ -120,7 +126,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Camera, Check, Delete } from '@element-plus/icons-vue'
 import { shipmentApi, taobaoApi } from '@/api'
-import { ORDER_SOURCES, TAOBAO_STATUS, statusStyle } from '@/constants'
+import { TAOBAO_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -135,7 +141,7 @@ const COL_W = 110
 const columns = [
   { key: 'date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
-  { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
+  { key: 'platform', label: '来源', type: 'tag', field: 'platform', width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
   { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: COL_W, clearable: false },
@@ -232,6 +238,17 @@ async function saveItems(row) {
 
 // 编辑任一物品字段 → 该物品转为「已确认」(auto=false，去灰) 并写库
 function onItemEdit(row, it) { it.auto = false; saveItems(row) }
+
+// 邮费改动：写库并让订单价随之重算（不填=包邮）。不覆盖展开面板里未保存的物品编辑
+async function savePostage(row) {
+  try {
+    const updated = await taobaoApi.update(row.id, { version: row.version, postage_cny: itemPrice(row.postage_cny) })
+    const { items, ...rest } = updated
+    Object.assign(row, rest)
+  } catch (e) {
+    if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
+  }
+}
 
 // 删除某物品：二次确认后再移除并写库
 async function removeItem(row, i) {
@@ -517,6 +534,9 @@ onBeforeUnmount(() => {
 /* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
 .item-tbl tr.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
 .item-hint { margin-top: 6px; color: #6b7488; font-size: 12px; }
+.postage-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.postage-lb { color: #9ba8bf; font-size: 13px; }
+.postage-hint { color: #6b7488; font-size: 12px; }
 /* 单元格内输入做成无边框，贴合一级列表的扁平格子观感 */
 .item-tbl :deep(.el-input__wrapper),
 .item-tbl :deep(.el-input-number .el-input__wrapper) {

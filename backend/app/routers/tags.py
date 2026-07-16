@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..db.dialect import insert_or_ignore
+from ..db.dialect import insert_or_ignore, upsert
 from ..models import (
     ShipmentOrder,
     StagingItem,
@@ -31,17 +31,21 @@ router = APIRouter(
     prefix="/api/tags", tags=["tags"], dependencies=[Depends(get_current_user)]
 )
 
-_ALLOWED_FIELDS = {"taobao_account", "recipient"}
+_ALLOWED_FIELDS = {"taobao_account", "recipient", "platform"}
 _N_COLORS = 10   # 与前端 TAG_PALETTE 长度一致
 
 # 每个标签字段 → 数据里承载该值的 (模型, 列)。用于把「数据里出现过的值」并入可选集。
-# 淘宝账号同时看正式订单与暂存（爬虫先写暂存，账号即时可选）；收货人看集运订单。
+# 淘宝账号同时看正式订单与暂存（爬虫先写暂存，账号即时可选）；收货人看集运订单；来源看正式订单与暂存。
 _FIELD_SOURCES = {
     "taobao_account": (
         (TaobaoOrder, TaobaoOrder.taobao_account),
         (TaobaoStaging, TaobaoStaging.taobao_account),
     ),
     "recipient": ((ShipmentOrder, ShipmentOrder.recipient),),
+    "platform": (
+        (TaobaoOrder, TaobaoOrder.platform),
+        (TaobaoStaging, TaobaoStaging.platform),
+    ),
 }
 
 
@@ -133,6 +137,25 @@ def add_tag(field: str, payload: TagIn, session: Session = Depends(get_session))
             {"field": field, "value": value, "color": color}, ["field", "value"],
         ))
         session.commit()
+    return _list(session, field)
+
+
+@router.put("/{field}/color", response_model=list[TagOut])
+def set_tag_color(
+    field: str,
+    value: str = Query(..., description="标签值"),
+    color: int = Query(..., ge=0, lt=_N_COLORS, description=f"调色盘序号 0..{_N_COLORS - 1}"),
+    session: Session = Depends(get_session),
+):
+    """手动给某标签改颜色（调色盘 10 色之一）。颜色本是建标签时自动分配、之后不变，这里开手动改的口子。
+    用 upsert：标签已在库则改色；只在数据里出现、还没登记的值则顺带登记为该色。"""
+    _check_field(field)
+    session.execute(upsert(
+        session.get_bind(), TagOption,
+        {"field": field, "value": value, "color": color},
+        ["field", "value"], {"color": color},
+    ))
+    session.commit()
     return _list(session, field)
 
 

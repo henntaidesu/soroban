@@ -40,7 +40,7 @@ def _mirror_to_staging(session: Session, order: TaobaoOrder, built_items) -> Non
         return
     st.order_date, st.order_no, st.shop = order.date, order.order_no, order.shop
     st.taobao_account, st.platform, st.express_no = order.taobao_account, order.platform, order.express_no
-    st.fx_rate, st.order_status = order.fx_rate, order.status
+    st.postage_cny, st.fx_rate, st.order_status = order.postage_cny, order.fx_rate, order.status
     if built_items is not None:
         st.items = [StagingItem(**d) for d in built_items]
     st.sync_from_items()
@@ -126,9 +126,11 @@ def create_order(payload: TaobaoCreate, session: Session = Depends(get_session))
     _check_shipment(session, order.shipment_order_id)   # 挂靠的集运单不存在/已删 → 友好 422（而非 FK 撞库转 409）
     if order.fx_rate is None:                 # 新建时写入当天汇率
         order.fx_rate = current_rate(session)
-    # 最小单位是物品：至少 1 条（无物品则按商品名+订单价自动生成，灰显可改）
-    order.items = [OrderItem(**d) for d in build_items(payload.items, payload.price_cny, payload.shop)]
-    order.sync_from_items()                   # price_cny = Σ(单价×数量)，并重算日元
+    # 最小单位是物品：至少 1 条（无物品则按商品名+货款自动生成，灰显可改）。
+    # 播种用「货款」= 订单价种子 - 邮费，避免把邮费也摊进物品单价（否则 sync 加邮费会重复计）。
+    seed_goods = (payload.price_cny - (payload.postage_cny or 0)) if payload.price_cny is not None else None
+    order.items = [OrderItem(**d) for d in build_items(payload.items, seed_goods, payload.shop)]
+    order.sync_from_items()                   # price_cny = Σ(单价×数量) + 邮费，并重算日元
     session.add(order)
     session.flush()                           # 写入并占写锁；FK 保证集运单硬存在
     # 同事务内复核集运单未软删（此为本事务首次读取该单、非身份映射缓存），闭合并发软删 TOCTOU
@@ -163,14 +165,15 @@ def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depend
     for key, value in data.items():
         setattr(order, key, value)
 
-    # seed 兜底：物品都无单价且未带订单总价时，用订单当前价重播种（不清零，见 build_items）
+    # seed 兜底（货款口径）：物品都无单价时用「订单当前价 - 邮费」重播种，避免把邮费摊进单价再被 sync 重复加
     seed = payload.price_cny if payload.price_cny is not None else order.price_cny
+    seed_goods = (seed - (order.postage_cny or 0)) if seed is not None else None
     built = None
     if payload.items is not None:            # 给了 items 就整体替换（[] → 自动补 1 条占位）
-        built = build_items(payload.items, seed, order.shop)
+        built = build_items(payload.items, seed_goods, order.shop)
         order.items = [OrderItem(**d) for d in built]
     elif not order.items:                    # 兜底：历史订单可能无物品 → 补占位，守住「≥1 物品」不变量
-        order.items = [OrderItem(**d) for d in build_items([], seed, order.shop)]
+        order.items = [OrderItem(**d) for d in build_items([], seed_goods, order.shop)]
     order.sync_from_items()                  # 无论是否改物品：价格恒由物品派生，并按新 fx/override 重算日元
     _mirror_to_staging(session, order, built)  # 若由暂存导入：镜像回暂存行，避免删单后重导丢失编辑
 

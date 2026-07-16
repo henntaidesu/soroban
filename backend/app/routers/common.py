@@ -20,6 +20,8 @@ def build_items(items_in, seed_total, shop):
       其余置 0，全部 auto=True 待人工拆分复核。
     - 给了带单价的物品 → 原样采用（单价 None→0）；auto 沿用客户端回传（未改动的自动项保持灰）。
     返回的 dict 同时适用 OrderItem 与 StagingItem 构造。"""
+    if seed_total is not None and seed_total < 0:     # 邮费>种子价等异常输入 → 货款夹到 0，绝不落负单价
+        seed_total = Decimal("0.00")
     if not items_in:
         return [{"name": (shop or "未命名物品")[:255], "quantity": 1,
                  "price_cny": seed_total if seed_total is not None else Decimal("0.00"), "auto": True}]

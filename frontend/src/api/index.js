@@ -45,6 +45,11 @@ export const miscApi = {
   remove: (id) => http.delete(`/misc/${id}`),
 }
 
+// 物品列表（对接最小单位；只读，编辑仍在淘宝订单页展开面板）
+export const itemsApi = {
+  list: (params) => http.get('/items', { params }),
+}
+
 export const stagingApi = {
   list: (params) => http.get('/staging', { params }),
   create: (data) => http.post('/staging', data),
@@ -68,6 +73,8 @@ export const pluginsApi = {
   saveConfig: (id, cfg) => http.put(`/plugins/${id}/config`, cfg),
   login: (id, account) => http.post(`/plugins/${id}/login`, null, { params: { account } }),
   fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
+  addAccount: (id, name, platform) => http.post(`/plugins/${id}/account`, null, { params: { name, platform } }),
+  setAccountEnabled: (id, account, enabled) => http.patch(`/plugins/${id}/account`, null, { params: { account, enabled } }),
   deleteAccount: (id, account) => http.delete(`/plugins/${id}/account`, { params: { account } }),
   renameAccount: (id, oldName, newName) =>
     http.post(`/plugins/${id}/account/rename`, null, { params: { old: oldName, new: newName } }),
@@ -94,6 +101,7 @@ export const tagsApi = {
   list: (field) => http.get(`/tags/${field}`),
   add: (field, value) => http.post(`/tags/${field}`, { value }),
   remove: (field, value) => http.delete(`/tags/${field}/${encodeURIComponent(value)}`),
+  setColor: (field, value, color) => http.put(`/tags/${field}/color`, null, { params: { value, color } }),
   // 改名：taobao_account 牵连插件磁盘会话/配置 → 走插件全链路端点；其它字段走通用标签改名
   rename: (field, oldVal, newVal) =>
     field === 'taobao_account'

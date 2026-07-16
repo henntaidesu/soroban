@@ -64,6 +64,21 @@ class MoneyOut(SQLModel):
     jpy_settled: Optional[int] = None
 
 
+class PostageIn(SQLModel):
+    """邮费输入（淘宝订单/暂存共用）。空=包邮(0)；订单价 = Σ(单价×数量) + 邮费。可编辑（非派生）。"""
+    postage_cny: Optional[Decimal] = None
+
+    @field_validator("postage_cny")
+    @classmethod
+    def _q_postage(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v is None:
+            return None
+        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
+        if v < 0:
+            raise ValueError("邮费不能为负数")
+        return v
+
+
 def _check(value: str, allowed: set[str], label: str) -> str:
     if value not in allowed:
         raise ValueError(f"非法{label}: {value!r}，允许值 {sorted(allowed)}")
@@ -127,7 +142,25 @@ class OrderItemRead(SQLModel):
     auto: bool = False
 
 
-class TaobaoBase(MoneyIn):
+class ItemListRead(SQLModel):
+    """物品列表页：一行=一个 OrderItem + 其父订单只读上下文。amount_cny=单价×数量。"""
+    id: int
+    name: str
+    quantity: int
+    price_cny: Optional[Decimal] = None
+    amount_cny: Optional[Decimal] = None
+    auto: bool = False
+    order_id: int
+    date: dt.date
+    order_no: Optional[str] = None
+    shop: Optional[str] = None
+    taobao_account: Optional[str] = None
+    platform: Optional[str] = None
+    status: str
+    express_no: Optional[str] = None
+
+
+class TaobaoBase(MoneyIn, PostageIn):
     date: dt.date
     order_no: Optional[str] = None
     shop: Optional[str] = None
@@ -152,7 +185,7 @@ class TaobaoCreate(TaobaoBase):
     items: list[OrderItemIn] = []
 
 
-class TaobaoUpdate(MoneyIn):
+class TaobaoUpdate(MoneyIn, PostageIn):
     version: int                                   # 乐观锁必填
     date: Optional[dt.date] = None
     order_no: Optional[str] = None
@@ -178,6 +211,7 @@ class TaobaoUpdate(MoneyIn):
 class TaobaoRead(MoneyOut):
     id: int
     date: dt.date
+    postage_cny: Optional[Decimal] = None
     order_no: Optional[str] = None
     shop: Optional[str] = None
     url: Optional[str] = None
@@ -359,7 +393,7 @@ class StagingItemRead(SQLModel):
     auto: bool = False
 
 
-class StagingBase(SQLModel):
+class StagingBase(PostageIn):
     order_no: Optional[str] = None
     taobao_account: Optional[str] = None
     platform: Optional[str] = None           # 来源平台（淘宝/闲鱼/京东）；导入时随单迁移到账本

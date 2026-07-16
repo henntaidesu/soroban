@@ -1,5 +1,6 @@
 """淘宝订单（正式账本）+ 订单行。"""
 
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import Column, Index, Text, text
@@ -40,6 +41,7 @@ class TaobaoOrder(LedgerBase, table=True):
     shipment_order_id: Optional[int] = Field(
         default=None, foreign_key="shipmentorder.id", index=True
     )  # 可空 = 已买未集运
+    postage_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)  # 邮费（元）；空=包邮(0)。订单价 = Σ(单价×数量) + 邮费
 
     shipment_order: Optional["ShipmentOrder"] = Relationship(back_populates="taobao_orders")  # noqa: F821
     items: list["OrderItem"] = Relationship(  # noqa: F821
@@ -48,6 +50,6 @@ class TaobaoOrder(LedgerBase, table=True):
     )
 
     def sync_from_items(self) -> None:
-        """订单价由物品单价×数量之和生成，再重算日元。改动 items 后必须调用。"""
-        self.price_cny = price_from_items(self.items)
+        """订单价 = Σ(物品单价×数量) + 邮费，再重算日元。改动 items/邮费 后必须调用。"""
+        self.price_cny = price_from_items(self.items) + (self.postage_cny or 0)
         self.compute_money()

@@ -40,6 +40,12 @@
               <el-button size="small" :icon="Plus" @click="ensureItems(row).push({ name: '', quantity: 1, price_cny: null, auto: false })">加物品</el-button>
               <el-button size="small" type="primary" @click="saveItems(row)">保存物品</el-button>
             </div>
+            <div class="postage-row">
+              <span class="postage-lb">邮费（元）</span>
+              <el-input-number v-model="row.postage_cny" :min="0" :precision="2" :controls="false" size="small"
+                               placeholder="包邮" style="width: 130px" @change="savePostage(row)" />
+              <span class="postage-hint">不填 = 包邮（订单价 = Σ单价×数量 + 邮费）</span>
+            </div>
           </div>
         </template>
 
@@ -65,7 +71,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { stagingApi } from '@/api'
-import { ORDER_SOURCES, STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
+import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 // 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
@@ -73,7 +79,7 @@ const COL_W = 110
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
-  { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
+  { key: 'platform', label: '来源', type: 'tag', field: 'platform', width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },   // 标题长：点开弹宽框看全
   { key: 'price_cny', label: '人民币（元）', format: 'cny', readonly: true, width: COL_W },   // 由物品单价×数量派生
   { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: COL_W },
@@ -152,6 +158,18 @@ async function saveItems(row) {
   }
 }
 
+// 邮费改动：写库并让暂存价随之重算（不填=包邮）。不覆盖未保存的物品编辑
+async function savePostage(row) {
+  const postage = (row.postage_cny === '' || row.postage_cny == null) ? null : Number(row.postage_cny)
+  try {
+    const updated = await stagingApi.update(row.id, { version: row.version, postage_cny: postage })
+    const { items, ...rest } = updated
+    Object.assign(row, rest)
+  } catch (e) {
+    if (e.response?.status === 409) { ElMessage.warning(e.response?.data?.detail || '数据已变，已刷新'); load() }
+  }
+}
+
 async function addRow(data = {}) {
   try {
     const created = await stagingApi.create({ ...data })
@@ -201,4 +219,7 @@ onMounted(load)
 .item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 /* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
 .item-row.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
+.postage-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.postage-lb { color: #9ba8bf; font-size: 13px; }
+.postage-hint { color: #7d8aa3; font-size: 12px; }
 </style>

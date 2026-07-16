@@ -29,6 +29,7 @@ class TaobaoStaging(SQLModel, table=True):
     platform: Optional[str] = Field(default=None, max_length=32)  # 来源平台（淘宝/闲鱼/京东）；淘宝插件抓取即「淘宝」，导入时随单迁移到账本
     shop: Optional[str] = Field(default=None, max_length=255)
     price_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)
+    postage_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)  # 邮费（元）；空=包邮。价 = Σ(单价×数量) + 邮费
     fx_rate: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)  # 新建/抓取时记当天汇率，导入一同迁移
     order_date: Optional[dt.date] = None
     express_no: Optional[str] = Field(default=None, max_length=64)
@@ -48,8 +49,8 @@ class TaobaoStaging(SQLModel, table=True):
     )
 
     def sync_from_items(self) -> None:
-        """暂存人民币价由物品单价×数量之和生成（与账本同口径）。改动 items 后调用。"""
-        self.price_cny = price_from_items(self.items)
+        """暂存价 = Σ(物品单价×数量) + 邮费（与账本同口径）。改动 items/邮费 后调用。"""
+        self.price_cny = price_from_items(self.items) + (self.postage_cny or 0)
 
 
 class StagingItem(SQLModel, table=True):

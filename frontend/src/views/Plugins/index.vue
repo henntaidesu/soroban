@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="bar">
-      <span class="hint">soroban 自动扫描 scraper/ 下 soroban-scraper-* 目录作为插件。登录授权、参数、定时都在这里管；插件本体只管抓取。抓到的订单进「全部订单」待处理。</span>
+      <span class="hint">soroban 扫 scraper/ 下 soroban-scraper-* 目录作为插件。这里加账号、授权、启停、定时；插件只管抓取，抓到的单进「全部订单」待处理。</span>
       <el-button size="small" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
@@ -21,61 +21,58 @@
         </div>
       </template>
 
-      <!-- 参数 -->
-      <div class="field" v-for="par in p.params" :key="par.key">
-        <label class="flabel">{{ par.label || par.key }}</label>
-        <el-switch v-if="par.type === 'bool'" v-model="p._form.params[par.key]" />
-        <el-input-number v-else-if="par.type === 'number' || par.type === 'int'"
-                         v-model="p._form.params[par.key]" :min="0" />
-        <el-input v-else v-model="p._form.params[par.key]" :placeholder="String(par.default ?? '')" style="max-width: 360px" />
-      </div>
-
-      <!-- 定时 -->
+      <!-- 插件设置：定时抓取 -->
       <div class="field">
         <label class="flabel">定时抓取（分钟，0=关闭）</label>
-        <el-input-number v-model="p._form.schedule_minutes" :min="0" :step="30" />
+        <el-input-number v-model="p._form.schedule_minutes" :min="0" :step="30" size="small" />
+        <el-button type="primary" size="small" @click="saveConfig(p)">保存</el-button>
         <span class="sub">{{ p.config.last_run_at ? '上次：' + fmtTime(p.config.last_run_at) : '尚未抓取' }}</span>
       </div>
 
+      <!-- 添加账号 -->
+      <div class="sect">添加账号</div>
       <div class="field">
-        <el-button type="primary" size="small" @click="saveConfig(p)">保存配置</el-button>
+        <el-input v-model="p._add.name" size="small" placeholder="账号昵称" style="width: 160px"
+                  @keyup.enter="doAddAccount(p)" />
+        <el-select v-model="p._add.platform" size="small" filterable allow-create default-first-option
+                   placeholder="导入平台" style="width: 140px">
+          <el-option v-for="o in platformOpts" :key="o" :label="o" :value="o" />
+        </el-select>
+        <el-button type="primary" size="small" :disabled="!p.installed" @click="doAddAccount(p)">添加</el-button>
+        <span class="sub">平台加时确定、之后不可改（改名只改昵称）</span>
       </div>
 
-      <!-- 账号授权 -->
-      <div class="sect">账号授权</div>
-      <div v-if="!p.accounts.length" class="sub">配置里还没填账号（保存后此处出现每个账号的授权状态）。</div>
-      <div v-for="a in p.accounts" :key="a.account" class="acct">
+      <!-- 账号列表 -->
+      <div class="sect">账号（{{ p.accounts.length }}）</div>
+      <div v-if="!p.accounts.length" class="sub">还没有账号——用上面「添加账号」加一个。</div>
+      <div v-for="a in p.accounts" :key="a.account" class="acct" :class="{ dim: !a.enabled }">
+        <el-switch v-if="a.configured" v-model="a.enabled" size="small" :disabled="!p.installed"
+                   title="停用后定时与「抓取全部账号」都跳过它" @change="(v) => doToggle(p, a, v)" />
+        <span v-else class="sw-ph" title="磁盘上有登录会话但未添加为账号" />
+
         <span class="aname">{{ a.account }}</span>
+        <el-tag v-if="a.platform" size="small" :style="platformStyle(a.platform)">{{ a.platform }}</el-tag>
         <el-tag size="small" :style="typeStyle(a.authorized ? 'success' : 'warning')">
           {{ a.authorized ? '已授权' : '未授权' }}
         </el-tag>
         <el-tag v-if="!a.configured" size="small" :style="typeStyle('info')"
-                title="磁盘上有此账号的登录会话，但未写入插件配置。把它填进上面的「账号」并保存，定时抓取才会带上它。">
-          未入库
-        </el-tag>
+                title="磁盘上有此账号的登录会话，但没作为账号添加。想纳管就用上面「添加账号」加同名账号。">未添加</el-tag>
+        <el-tag v-else-if="!a.enabled" size="small" :style="typeStyle('info')">未启用</el-tag>
+
+        <div class="grow" />
         <el-button size="small" link type="primary" :disabled="!p.installed" @click="doLogin(p, a.account)">
           {{ a.authorized ? '重新授权' : '授权登录' }}
         </el-button>
-        <el-button size="small" link :disabled="!p.installed || !a.authorized" @click="doFetch(p, a.account)">
-          抓这个号
-        </el-button>
-        <el-button size="small" link @click="doRenameAccount(p, a.account)">
-          改名
-        </el-button>
-        <el-button size="small" link type="danger" @click="doDeleteAccountStaging(p, a.account)">
-          删暂存单
-        </el-button>
-        <el-button size="small" link type="danger" @click="doDeleteAccountOrders(p, a.account)">
-          删账本单
-        </el-button>
-        <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">
-          删除
-        </el-button>
+        <el-button size="small" link :disabled="!p.installed || !a.authorized" @click="doFetch(p, a.account)">抓这个号</el-button>
+        <el-button size="small" link @click="doRenameAccount(p, a.account)">改名</el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccountStaging(p, a.account)">删暂存单</el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccountOrders(p, a.account)">删账本单</el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">删除</el-button>
       </div>
 
       <div class="field" style="margin-top: 12px">
-        <el-button size="small" :icon="Download" :disabled="!p.installed || !p.accounts.length" @click="doFetch(p)">
-          抓取全部账号
+        <el-button size="small" :icon="Download" :disabled="!p.installed || !enabledCount(p)" @click="doFetch(p)">
+          抓取全部账号（{{ enabledCount(p) }}）
         </el-button>
       </div>
     </el-card>
@@ -83,34 +80,36 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Download } from '@element-plus/icons-vue'
-import { pluginsApi } from '@/api'
-import { typeStyle } from '@/constants'
+import { pluginsApi, tagsApi } from '@/api'
+import { tagStyleAt, typeStyle } from '@/constants'
 
 const plugins = ref([])
 const loading = ref(false)
+const platformTags = ref([])   // [{value,color}] 来源平台标签集（下拉选项 + 上色）
+
+const platformOpts = computed(() => platformTags.value.map((t) => t.value))
+const platformColor = computed(() => Object.fromEntries(platformTags.value.map((t) => [t.value, t.color])))
+function platformStyle(v) { return tagStyleAt(platformColor.value[v] ?? -1, v) }
 
 function fmtTime(s) {
   const d = new Date(s)
   return isNaN(d) ? s : d.toLocaleString('ja-JP')
 }
-
-// 把服务端配置铺到可编辑表单：参数缺省用 manifest 默认值兜底
-function toForm(p) {
-  const params = {}
-  for (const par of p.params || []) {
-    params[par.key] = p.config.params?.[par.key] ?? par.default ?? ''
-  }
-  return { enabled: p.config.enabled, params, schedule_minutes: p.config.schedule_minutes || 0 }
-}
+function enabledCount(p) { return p.accounts.filter((a) => a.configured && a.enabled).length }
 
 async function load() {
   loading.value = true
   try {
     const list = await pluginsApi.list()
-    plugins.value = list.map((p) => ({ ...p, _busy: false, _form: toForm(p) }))
+    plugins.value = list.map((p) => ({
+      ...p, _busy: false,
+      _form: { enabled: p.config.enabled, schedule_minutes: p.config.schedule_minutes || 0 },
+      _add: { name: '', platform: '淘宝' },
+    }))
+    try { platformTags.value = await tagsApi.list('platform') } catch (_) { /* 无所谓，下拉可自建 */ }
   } catch (_) { /* 拦截器已提示 */ } finally {
     loading.value = false
   }
@@ -119,15 +118,36 @@ async function load() {
 async function saveConfig(p) {
   p._busy = true
   try {
-    await pluginsApi.saveConfig(p.id, {
-      enabled: p._form.enabled,
-      params: p._form.params,
-      schedule_minutes: p._form.schedule_minutes,
-    })
+    await pluginsApi.saveConfig(p.id, { enabled: p._form.enabled, params: {}, schedule_minutes: p._form.schedule_minutes })
     ElMessage.success('已保存')
     await load()
   } catch (_) { /* 拦截器已提示 */ } finally {
     p._busy = false
+  }
+}
+
+async function doAddAccount(p) {
+  const name = (p._add.name || '').trim()
+  const platform = (p._add.platform || '淘宝').trim() || '淘宝'
+  if (!name) { ElMessage.warning('请填账号昵称'); return }
+  if (name.includes(',')) { ElMessage.warning('昵称不能含逗号'); return }
+  p._busy = true
+  try {
+    await pluginsApi.addAccount(p.id, name, platform)
+    ElMessage.success(`已添加账号「${name}」（${platform}）`)
+    p._add.name = ''
+    await load()
+  } catch (_) { /* 拦截器已提示 */ } finally {
+    p._busy = false
+  }
+}
+
+async function doToggle(p, a, enabled) {
+  try {
+    await pluginsApi.setAccountEnabled(p.id, a.account, enabled)
+  } catch (_) {
+    a.enabled = !enabled   // 失败回滚开关
+    await load()
   }
 }
 
@@ -141,7 +161,7 @@ async function doLogin(p, account) {
 async function doFetch(p, account) {
   try {
     await pluginsApi.fetch(p.id, account)
-    ElMessage.success(account ? `已触发抓取：${account}` : '已触发抓取（全部账号）')
+    ElMessage.success(account ? `已触发抓取：${account}` : '已触发抓取（全部启用账号）')
   } catch (_) { /* 拦截器已提示 */ }
 }
 
@@ -149,7 +169,7 @@ async function doRenameAccount(p, account) {
   let value
   try {
     const r = await ElMessageBox.prompt(
-      `给账号「${account}」改个名。会一并迁移它名下的暂存/账本订单、保留标签颜色、重命名本地登录会话。新名字须全新、不能含逗号。`,
+      `给账号「${account}」改个名（只改昵称，平台不变）。会一并迁移它名下的暂存/账本订单、保留标签颜色、重命名本地登录会话。新名字须全新、不能含逗号。`,
       '账号改名',
       {
         confirmButtonText: '改名', cancelButtonText: '取消', inputValue: account,
@@ -173,14 +193,14 @@ async function doRenameAccount(p, account) {
 async function doDeleteAccount(p, account) {
   try {
     await ElMessageBox.confirm(
-      `确定删除账号「${account}」的授权？会删掉本地登录会话并移出配置，之后需重新扫码登录才能再抓这个号。`,
-      '删除账号授权', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      `确定删除账号「${account}」？会删掉本地登录会话并从配置移除，之后需重新添加+扫码登录才能再抓。不动已抓进库的订单。`,
+      '删除账号', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
   } catch (_) { return }   // 用户取消
   p._busy = true
   try {
     await pluginsApi.deleteAccount(p.id, account)
-    ElMessage.success(`已删除 ${account} 的授权`)
+    ElMessage.success(`已删除账号 ${account}`)
     await load()
   } catch (_) { /* 拦截器已提示 */ } finally {
     p._busy = false
@@ -236,5 +256,7 @@ onMounted(load)
 .sub { color: #7d8aa3; font-size: 12px; }
 .sect { color: #c7d2e6; font-size: 13px; font-weight: 600; margin: 6px 0 10px; padding-top: 12px; border-top: 1px solid #1c2740; }
 .acct { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.aname { color: #e6edf7; font-size: 14px; min-width: 120px; }
+.acct.dim { opacity: 0.5; }
+.aname { color: #e6edf7; font-size: 14px; min-width: 96px; }
+.sw-ph { display: inline-block; width: 28px; }
 </style>

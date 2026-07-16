@@ -1,7 +1,5 @@
 """看板聚合：对 jpy_settled 求和；排除软删与不计入状态（取消/退款）（P4）。"""
 
-from collections import defaultdict
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -48,17 +46,16 @@ def _month_expr(session: Session, date_col):
     return func.strftime("%Y-%m", date_col)
 
 
-def _by_month(session: Session, model, has_status: bool, bucket: dict) -> None:
+def _by_month_cat(session: Session, model, has_status: bool) -> dict:
+    """某类目按月的 {月份: (结算日元合计, 单数)}。"""
     conds = _valid_conds(model, has_status)
     month = _month_expr(session, model.date)
     rows = session.exec(
-        select(month, func.coalesce(func.sum(model.jpy_settled), 0))
+        select(month, func.coalesce(func.sum(model.jpy_settled), 0), func.count())
         .where(*conds)
         .group_by(month)
     ).all()
-    for m, total in rows:
-        if m is not None:
-            bucket[m] += int(total)
+    return {m: (int(j), int(c)) for m, j, c in rows if m is not None}
 
 
 @router.get("", response_model=DashboardRead)
@@ -67,11 +64,19 @@ def dashboard(session: Session = Depends(get_session)):
     shipment_jpy = _sum(session, ShipmentOrder, True)
     misc_jpy = _sum(session, MiscExpense, False)
 
-    bucket: dict[str, int] = defaultdict(int)
-    _by_month(session, TaobaoOrder, True, bucket)
-    _by_month(session, ShipmentOrder, True, bucket)
-    _by_month(session, MiscExpense, False, bucket)
-    by_month = [MonthTotal(month=m, jpy=bucket[m]) for m in sorted(bucket)]
+    tb = _by_month_cat(session, TaobaoOrder, True)
+    sp = _by_month_cat(session, ShipmentOrder, True)
+    mc = _by_month_cat(session, MiscExpense, False)
+    by_month = []
+    for m in sorted(set(tb) | set(sp) | set(mc), reverse=True):   # 最新月在前（卡片自上而下）
+        t_j, t_c = tb.get(m, (0, 0))
+        s_j, s_c = sp.get(m, (0, 0))
+        x_j, x_c = mc.get(m, (0, 0))
+        by_month.append(MonthTotal(
+            month=m, jpy=t_j + s_j + x_j,
+            taobao_jpy=t_j, shipment_jpy=s_j, misc_jpy=x_j,
+            taobao_count=t_c, shipment_count=s_c, misc_count=x_c,
+        ))
 
     return DashboardRead(
         total_jpy=taobao_jpy + shipment_jpy + misc_jpy,

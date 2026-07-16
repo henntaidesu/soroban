@@ -354,7 +354,13 @@ class MiscRead(MoneyOut):
 
 class MonthTotal(SQLModel):
     month: str          # YYYY-MM
-    jpy: int
+    jpy: int            # 当月合计（结算日元）
+    taobao_jpy: int = 0
+    shipment_jpy: int = 0
+    misc_jpy: int = 0
+    taobao_count: int = 0
+    shipment_count: int = 0
+    misc_count: int = 0
 
 
 class DashboardRead(SQLModel):

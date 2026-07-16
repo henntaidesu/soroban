@@ -51,7 +51,7 @@
           </el-select>
         </template>
         <template #cell-items="{ row }">
-          <span :class="row.items && row.items.length ? '' : 'ph'">{{ itemSummary(row) }}</span>
+          <span :class="{ ph: !(row.items && row.items.length), 'auto-txt': allTitleItems(row) }">{{ itemSummary(row) }}</span>
         </template>
 
         <template #expand="{ row }">
@@ -67,8 +67,8 @@
                 <tr><th>物品名</th><th>数量</th><th>单价（元）</th><th></th></tr>
               </thead>
               <tbody>
-                <tr v-for="(it, i) in (row.items || [])" :key="i" :class="{ 'item-auto': it.auto }"
-                    :title="it.auto ? '系统自动生成/自动定价，编辑即覆盖（变为已确认）' : ''">
+                <tr v-for="(it, i) in (row.items || [])" :key="i" :class="{ 'item-auto': isTitleItem(row, it) }"
+                    :title="isTitleItem(row, it) ? '物品名与商品标题相同（无独立物品详情）；改成真实物品名即变正常色' : ''">
                   <td><el-input v-model="it.name" size="small" placeholder="物品名" @change="onItemEdit(row, it)" /></td>
                   <td><el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" @change="onItemEdit(row, it)" /></td>
                   <td><el-input-number v-model="it.price_cny" :min="0" :precision="2" :controls="false" size="small"
@@ -92,7 +92,7 @@
                                placeholder="包邮" style="width: 130px" @change="savePostage(row)" />
               <span class="postage-hint">不填 = 包邮</span>
             </div>
-            <div class="item-hint">订单人民币 = Σ(单价 × 数量) + 邮费，自动汇总，不在列表直接改。灰色 = 系统自动生成，编辑即确认。</div>
+            <div class="item-hint">订单人民币 = Σ(单价 × 数量) + 邮费，自动汇总，不在列表直接改。灰色 = 物品名与商品标题相同（无独立物品详情），改成真实物品名即正常。</div>
           </div>
         </template>
 
@@ -179,6 +179,14 @@ function onPickShipment(row, v) {   // -1 = 列表里的「清除」项；其余
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
   return row.items.map((it) => `（${it.quantity}x）${it.name}`).join('，')
+}
+// 灰显 = 物品名与商品标题相同（无独立物品详情，多为自动占位）；有真实物品名即正常
+function isTitleItem(row, it) {
+  return !!it.name && (it.name || '').trim() === (row.shop || '').trim()
+}
+// 列表「物品」格：全是标题占位（自动生成）时整格灰显
+function allTitleItems(row) {
+  return !!(row.items && row.items.length) && row.items.every((it) => isTitleItem(row, it))
 }
 function ensureItems(row) {
   if (!row.items) row.items = []
@@ -534,6 +542,7 @@ onBeforeUnmount(() => {
 /* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
 .item-tbl tr.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
 .item-hint { margin-top: 6px; color: #6b7488; font-size: 12px; }
+.auto-txt { color: #6b7488; font-style: italic; }   /* 列表「物品」格：自动生成(名=标题)时灰显 */
 .postage-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .postage-lb { color: #9ba8bf; font-size: 13px; }
 .postage-hint { color: #6b7488; font-size: 12px; }

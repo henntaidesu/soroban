@@ -44,7 +44,8 @@
       </div>
     </template>
     <el-input ref="inp" v-model="editVal" v-click-outside="onClickOutside" type="textarea"
-              class="gtn-long-in" :rows="4" resize="none" @keydown.esc="close" />
+              class="gtn-long-in" :rows="4" resize="none"
+              @keydown.enter.exact.prevent="commit" @keydown.esc="close" />
   </el-popover>
 
   <!-- text / decimal / int -->

@@ -30,9 +30,9 @@
         <template #cell-status="{ row }">
           <el-tag size="small" :style="statusStyle(row.status)">{{ row.status }}</el-tag>
         </template>
-        <!-- 灰显=系统自动生成/自动定价（去淘宝订单页展开编辑覆盖） -->
+        <!-- 灰显=物品名与商品标题相同（无独立物品详情） -->
         <template #cell-name="{ row }">
-          <span :class="{ 'auto-txt': row.auto }" :title="row.auto ? '系统自动生成/自动定价，去淘宝订单页展开编辑' : ''">{{ row.name }}</span>
+          <span :class="{ 'auto-txt': isTitleItem(row) }" :title="isTitleItem(row) ? '物品名与商品标题相同（无独立物品详情）' : ''">{{ row.name }}</span>
         </template>
       </NotionTable>
 
@@ -67,7 +67,7 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 50
+const pageSize = 30
 const filters = reactive({ status: '', platform: '', taobao_account: '', q: '' })
 
 // 账号标签的持久化配色（与其它页同一套色序，保证同一账号处处同色）
@@ -96,6 +96,11 @@ async function load() {
 }
 function reload() { page.value = 1; load() }
 function onPage(p) { page.value = p; load() }
+
+// 灰显 = 物品名与商品标题相同（无独立物品详情）
+function isTitleItem(row) {
+  return !!row.name && (row.name || '').trim() === (row.shop || '').trim()
+}
 
 onMounted(() => { loadAcctColors(); load() })
 </script>

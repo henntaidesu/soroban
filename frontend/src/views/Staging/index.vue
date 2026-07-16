@@ -19,7 +19,7 @@
           <span :class="row.scraped_at ? '' : 'ph'">{{ fmtDate(row.scraped_at) }}</span>
         </template>
         <template #cell-items="{ row }">
-          <span :class="row.items && row.items.length ? '' : 'ph'">{{ itemSummary(row) }}</span>
+          <span :class="{ ph: !(row.items && row.items.length), 'auto-txt': allTitleItems(row) }">{{ itemSummary(row) }}</span>
         </template>
         <template #cell-status="{ row }">
           <el-tag :style="stagingStyle(row.status)" size="small">{{ row.status }}</el-tag>
@@ -28,8 +28,8 @@
         <template #expand="{ row }">
           <div class="expand">
             <div class="ex-title">物品明细（一单多物）· 单价×数量汇总为订单价</div>
-            <div v-for="(it, i) in row.items" :key="i" class="item-row" :class="{ 'item-auto': it.auto }"
-                 :title="it.auto ? '系统自动生成/自动定价，编辑即覆盖' : ''">
+            <div v-for="(it, i) in row.items" :key="i" class="item-row" :class="{ 'item-auto': isTitleItem(row, it) }"
+                 :title="isTitleItem(row, it) ? '物品名与商品标题相同（无独立物品详情）；改成真实物品名即正常' : ''">
               <el-input v-model="it.name" size="small" placeholder="物品名" style="width: 180px" @change="it.auto = false" />
               <el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" style="width: 80px" @change="it.auto = false" />
               <el-input-number v-model="it.price_cny" :min="0" :precision="2" :controls="false" size="small"
@@ -95,12 +95,20 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 50
+const pageSize = 30
 const filters = reactive({ status: '', taobao_account: '', q: '' })
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
   return row.items.map((it) => `（${it.quantity}x）${it.name}`).join('，')
+}
+// 灰显 = 物品名与商品标题相同（无独立物品详情）；有真实物品名即正常
+function isTitleItem(row, it) {
+  return !!it.name && (it.name || '').trim() === (row.shop || '').trim()
+}
+// 列表「物品」格：全是标题占位（自动生成）时整格灰显
+function allTitleItems(row) {
+  return !!(row.items && row.items.length) && row.items.every((it) => isTitleItem(row, it))
 }
 function fmtDate(s) {                         // 入库日期：后端存 UTC(naive)，补 Z 后按本地(JST)显示为 YYYY-MM-DD
   if (!s) return '—'
@@ -214,6 +222,7 @@ onMounted(load)
 .hint { color: #7d8aa3; font-size: 12px; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .ph { color: #5b6880; }
+.auto-txt { color: #6b7488; font-style: italic; }   /* 列表「物品」格：自动生成(名=标题)时灰显 */
 .expand { padding: 12px 20px; }
 .ex-title { color: #9ba8bf; font-size: 13px; margin-bottom: 8px; }
 .item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }

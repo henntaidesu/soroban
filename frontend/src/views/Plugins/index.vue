@@ -46,20 +46,25 @@
       <div class="sect">账号（{{ p.accounts.length }}）</div>
       <div v-if="!p.accounts.length" class="sub">还没有账号——用上面「添加账号」加一个。</div>
       <div v-for="a in p.accounts" :key="a.account" class="acct" :class="{ dim: !a.enabled }">
-        <el-switch v-if="a.configured" v-model="a.enabled" size="small" :disabled="!p.installed"
-                   title="停用后定时与「抓取全部账号」都跳过它" @change="(v) => doToggle(p, a, v)" />
-        <span v-else class="sw-ph" title="磁盘上有登录会话但未添加为账号" />
+        <span class="c-sw">
+          <el-switch v-if="a.configured" v-model="a.enabled" size="small" :disabled="!p.installed"
+                     title="停用后定时与「抓取全部账号」都跳过它" @change="(v) => doToggle(p, a, v)" />
+        </span>
+        <span class="aname" :title="a.account">{{ a.account }}</span>
+        <span class="c-plat">
+          <el-tag v-if="a.platform" size="small" :style="platformStyle(a.platform)">{{ a.platform }}</el-tag>
+        </span>
+        <span class="c-auth">
+          <el-tag size="small" :style="typeStyle(a.authorized ? 'success' : 'warning')">
+            {{ a.authorized ? '已授权' : '未授权' }}
+          </el-tag>
+        </span>
+        <span class="c-state">
+          <el-tag v-if="!a.configured" size="small" :style="typeStyle('info')"
+                  title="磁盘上有此账号的登录会话，但没作为账号添加。想纳管就用上面「添加账号」加同名账号。">未添加</el-tag>
+          <el-tag v-else-if="!a.enabled" size="small" :style="typeStyle('info')">未启用</el-tag>
+        </span>
 
-        <span class="aname">{{ a.account }}</span>
-        <el-tag v-if="a.platform" size="small" :style="platformStyle(a.platform)">{{ a.platform }}</el-tag>
-        <el-tag size="small" :style="typeStyle(a.authorized ? 'success' : 'warning')">
-          {{ a.authorized ? '已授权' : '未授权' }}
-        </el-tag>
-        <el-tag v-if="!a.configured" size="small" :style="typeStyle('info')"
-                title="磁盘上有此账号的登录会话，但没作为账号添加。想纳管就用上面「添加账号」加同名账号。">未添加</el-tag>
-        <el-tag v-else-if="!a.enabled" size="small" :style="typeStyle('info')">未启用</el-tag>
-
-        <div class="grow" />
         <el-button size="small" link type="primary" :disabled="!p.installed" @click="doLogin(p, a.account)">
           {{ a.authorized ? '重新授权' : '授权登录' }}
         </el-button>
@@ -67,6 +72,7 @@
         <el-button size="small" link @click="doRenameAccount(p, a.account)">改名</el-button>
         <el-button size="small" link type="danger" @click="doDeleteAccountStaging(p, a.account)">删暂存单</el-button>
         <el-button size="small" link type="danger" @click="doDeleteAccountOrders(p, a.account)">删账本单</el-button>
+        <div class="grow" />
         <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">删除</el-button>
       </div>
 
@@ -255,8 +261,11 @@ onMounted(load)
 .flabel { color: #9ba8bf; font-size: 13px; min-width: 180px; }
 .sub { color: #7d8aa3; font-size: 12px; }
 .sect { color: #c7d2e6; font-size: 13px; font-weight: 600; margin: 6px 0 10px; padding-top: 12px; border-top: 1px solid #1c2740; }
-.acct { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.acct.dim { opacity: 0.5; }
-.aname { color: #e6edf7; font-size: 14px; min-width: 96px; }
-.sw-ph { display: inline-block; width: 28px; }
+.acct { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.acct.dim .aname, .acct.dim .c-plat, .acct.dim .c-auth { opacity: 0.4; }   /* 只灰昵称/平台/授权，开关和按钮保持清晰可用 */
+.c-sw { width: 40px; flex: none; display: inline-flex; }                   /* 固定列，孤儿无开关也占位，保证对齐 */
+.aname { width: 104px; flex: none; color: #e6edf7; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-plat { min-width: 64px; flex: none; display: inline-flex; }
+.c-auth { min-width: 58px; flex: none; display: inline-flex; }
+.c-state { min-width: 56px; flex: none; display: inline-flex; }
 </style>

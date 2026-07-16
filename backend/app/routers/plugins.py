@@ -88,6 +88,43 @@ def _authorized(manifest: dict, account: str) -> bool:
     return (manifest["_dir"] / state_dir / f"{account}.json").is_file()
 
 
+def _state_accounts(manifest: dict) -> list[str]:
+    """扫 state 目录里已有的会话文件，返回其账号名（<account>.json 的名字）。
+    用于 soroban 库被重置/换机后，磁盘上残留的授权仍能被发现、显示、复用（.tmp/.lock 不匹配 *.json）。"""
+    d = manifest["_dir"] / manifest.get("state_dir", ".state")
+    if not d.is_dir():
+        return []
+    return sorted(f.stem for f in d.glob("*.json"))
+
+
+def _merge_accounts(cfg: Optional[PluginConfig], manifest: dict) -> list[str]:
+    """配置里的账号 ∪ 磁盘上已有会话的账号（配置的在前、去重）。"""
+    accts = _accounts(cfg)
+    for a in _state_accounts(manifest):
+        if a not in accts:
+            accts.append(a)
+    return accts
+
+
+def _state_file(manifest: dict, account: str) -> Path:
+    """该账号会话文件的绝对路径，带目录穿越校验（account 可能来自用户手填的配置，别让它跳出 state 目录）。"""
+    d = (manifest["_dir"] / manifest.get("state_dir", ".state")).resolve()
+    f = (d / f"{account}.json").resolve()
+    if f.parent != d:
+        raise HTTPException(status_code=400, detail=f"非法账号名：{account}")
+    return f
+
+
+def _remove_account_state(manifest: dict, account: str) -> bool:
+    """删该账号在 state 目录里的全部痕迹：会话 <account>.json、半成品 .tmp、文件锁 .lock。
+    返回是否真的删到了登录会话（.json 是否存在过），供前端提示。"""
+    f = _state_file(manifest, account)
+    existed = f.is_file()
+    for p in (f, f.with_name(f.name + ".tmp"), f.with_name(f"{account}.lock")):
+        p.unlink(missing_ok=True)
+    return existed
+
+
 def _python(manifest: dict) -> Path:
     return manifest["_dir"] / manifest.get("python", ".venv/bin/python")
 
@@ -121,7 +158,8 @@ def list_plugins(session: Session = Depends(get_session)):
             params = json.loads(cfg.params_json) if cfg else {}
         except Exception:                               # params_json 被手改坏也不 500
             params = {}
-        accts = _accounts(cfg)
+        configured = _accounts(cfg)
+        accts = _merge_accounts(cfg, m)
         out.append({
             "id": m["id"], "name": m.get("name", m["id"]), "version": m.get("version"),
             "params": m.get("params", []),
@@ -132,7 +170,10 @@ def list_plugins(session: Session = Depends(get_session)):
                 "schedule_minutes": cfg.schedule_minutes if cfg else 0,
                 "last_run_at": cfg.last_run_at if cfg else None,
             },
-            "accounts": [{"account": a, "authorized": _authorized(m, a)} for a in accts],
+            "accounts": [
+                {"account": a, "authorized": _authorized(m, a), "configured": a in configured}
+                for a in accts
+            ],
         })
     return out
 
@@ -165,12 +206,37 @@ def fetch(
 ):
     m = _find(plugin_id)
     cfg = session.get(PluginConfig, plugin_id)
-    accts = [account] if account else _accounts(cfg)
+    accts = [account] if account else _merge_accounts(cfg, m)   # 不填账号=抓「配置 ∪ 磁盘已授权」的全部
     if not accts:
         raise HTTPException(status_code=400, detail="没有账号可抓：先在插件配置里填账号。")
     token = create_access_token(current, dt.timedelta(minutes=30))   # 真·短期 token（30min，够抓一次），走环境变量不进 argv
     pids = [_launch(m, "fetch", ["--account", a, "--soroban-url", _SELF_URL], token=token) for a in accts]
     return {"started": True, "accounts": accts, "pids": pids}
+
+
+@router.delete("/{plugin_id}/account")
+def delete_account(
+    plugin_id: str,
+    account: str = Query(..., description="要注销的账号：删磁盘登录会话并移出配置"),
+    session: Session = Depends(get_session),
+):
+    """注销某账号：删掉磁盘登录会话，并从插件配置的账号列表里移除。"""
+    m = _find(plugin_id)
+    cfg = session.get(PluginConfig, plugin_id)
+    if account not in _merge_accounts(cfg, m):
+        raise HTTPException(status_code=404, detail=f"该插件下没有账号：{account}")
+    removed = _remove_account_state(m, account)                 # 删磁盘会话（含 .tmp/.lock）
+    if cfg and account in _accounts(cfg):                       # 再从配置账号串里摘掉它
+        try:
+            params = json.loads(cfg.params_json)
+        except Exception:
+            params = {}
+        params["accounts"] = ",".join(a for a in _accounts(cfg) if a != account)
+        cfg.params_json = json.dumps(params, ensure_ascii=False)
+        cfg.updated_at = utcnow()
+        session.add(cfg)
+        session.commit()
+    return {"ok": True, "removed_session": removed}
 
 
 # --- 定时调度：按每个启用插件的 schedule_minutes 周期触发 fetch --------------

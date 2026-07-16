@@ -26,16 +26,28 @@ if errorlevel 1 goto bad_python
 where node >nul 2>nul
 if errorlevel 1 goto no_node
 
-REM ---- backend first-time setup ----
+REM ---- backend deps: create venv if missing; auto-sync when requirements.txt changes ----
 if exist "%BACKEND%\.venv" goto venv_ok
-echo First run: creating Python venv and installing backend deps...
+echo First run: creating Python venv...
 python -m venv "%BACKEND%\.venv"
 if errorlevel 1 goto venv_fail
 "%PY_BIN%" -m pip install --quiet --upgrade pip
+:venv_ok
+
+REM fingerprint requirements.txt (sha256 via python); reinstall only when it changed or first time
+set "REQ_STAMP=%BACKEND%\.venv\.requirements.sha256"
+for /f "usebackq delims=" %%H in (`python -c "import hashlib;print(hashlib.sha256(open(r'%BACKEND%\requirements.txt','rb').read()).hexdigest())"`) do set "REQ_HASH=%%H"
+set "REQ_OLD="
+if exist "%REQ_STAMP%" set /p REQ_OLD=<"%REQ_STAMP%"
+if not exist "%REQ_STAMP%" goto sync_backend
+if "%REQ_HASH%"=="%REQ_OLD%" goto deps_ok
+:sync_backend
+echo Syncing backend deps (first install or requirements changed)...
 "%PY_BIN%" -m pip install --quiet -r "%BACKEND%\requirements.txt"
 if errorlevel 1 goto deps_fail
-echo Backend deps installed.
-:venv_ok
+> "%REQ_STAMP%" echo %REQ_HASH%
+echo Backend deps ready.
+:deps_ok
 
 REM .env: generate from template with a random SECRET_KEY if missing
 if exist "%BACKEND%\.env" goto env_ok
@@ -49,12 +61,22 @@ pushd "%BACKEND%"
 "%PY_BIN%" -m app.seed
 popd
 
-REM ---- frontend first-time setup ----
-if exist "%FRONTEND%\node_modules" goto front_ok
-echo First run: installing frontend deps (npm install)...
+REM ---- frontend deps: install when node_modules missing or package.json changed ----
+set "PKG_STAMP=%FRONTEND%\node_modules\.package.sha256"
+for /f "usebackq delims=" %%H in (`python -c "import hashlib;print(hashlib.sha256(open(r'%FRONTEND%\package.json','rb').read()).hexdigest())"`) do set "PKG_HASH=%%H"
+set "PKG_OLD="
+if exist "%PKG_STAMP%" set /p PKG_OLD=<"%PKG_STAMP%"
+if not exist "%FRONTEND%\node_modules" goto sync_frontend
+if not exist "%PKG_STAMP%" goto sync_frontend
+if "%PKG_HASH%"=="%PKG_OLD%" goto front_ok
+:sync_frontend
+echo Syncing frontend deps (first install or package.json changed)...
 pushd "%FRONTEND%"
 call npm install
+if errorlevel 1 goto front_fail
 popd
+> "%PKG_STAMP%" echo %PKG_HASH%
+echo Frontend deps ready.
 :front_ok
 
 REM ---- start ----
@@ -93,6 +115,10 @@ pause
 exit /b 1
 :deps_fail
 echo [X] Failed to install backend deps.
+pause
+exit /b 1
+:front_fail
+echo [X] Failed to install frontend deps.
 pause
 exit /b 1
 :env_fail

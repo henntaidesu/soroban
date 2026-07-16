@@ -68,16 +68,21 @@ export const pluginsApi = {
   saveConfig: (id, cfg) => http.put(`/plugins/${id}/config`, cfg),
   login: (id, account) => http.post(`/plugins/${id}/login`, null, { params: { account } }),
   fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
+  deleteAccount: (id, account) => http.delete(`/plugins/${id}/account`, { params: { account } }),
 }
 
-// 数据库迁移（SQLite ↔ MySQL）
+// 数据库迁移/切换（SQLite ↔ MySQL，双向）。target 三选一：
+//   { connection_id }              — 一键复用已存连接
+//   { backend: 'sqlite' }          — 本地 SQLite
+//   { backend: 'mysql', host, ... } — 新 MySQL 连接
 export const dbApi = {
   status: () => http.get('/db/status'),
-  test: (cfg) => http.post('/db/test', cfg),
+  test: (target) => http.post('/db/test', target),
   // 迁移含建库+建表+拷数据，耗时可能长，放宽超时
-  migrate: (cfg) => http.post('/db/migrate', cfg, { timeout: 120000 }),
-  // 切换到 MySQL（热切换 + 清空本地 SQLite 业务数据）
-  switch: (cfg) => http.post('/db/switch', cfg, { timeout: 60000 }),
+  migrate: (target) => http.post('/db/migrate', target, { timeout: 120000 }),
+  // 热切换（无需重启）
+  switch: (target) => http.post('/db/switch', target, { timeout: 60000 }),
+  removeConnection: (id) => http.delete(`/db/connections/${id}`),
 }
 
 export const tagsApi = {

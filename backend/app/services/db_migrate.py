@@ -1,9 +1,9 @@
-"""SQLite → MySQL 迁移服务（供「数据库迁移」页调用）。
+"""数据库迁移服务（供「数据库」页调用；SQLite↔MySQL 双向）。
 
-流程：测试连通 → 建库(utf8mb4) → 目标建 schema(Alembic) → 校验目标为空 → 逐表拷数据 →
-（调用方）写配置 + 热切换 + 清空 SQLite 业务数据。
+流程：测试连通 →（MySQL 目标才）建库(utf8mb4) → 目标建 schema(Alembic) → 整表覆盖拷数据。
+切换（写配置 + 热切换）由 dbadmin 路由完成，且**不清空源库**——故切换可逆、可反复迁移。
 
-拷贝按外键依赖顺序，保留自增主键；只写模型声明的真实列——MySQL 的「活跃唯一」生成列不在
+拷贝按外键依赖顺序、保留自增主键；只写模型声明的真实列——MySQL 的「活跃唯一」生成列不在
 模型里，插入时由 MySQL 自算，绝不手写。
 """
 from __future__ import annotations
@@ -91,9 +91,18 @@ def is_target_empty(engine) -> bool:
 
 
 def copy_data(src_engine, dst_engine) -> dict:
-    """逐表 SQLite→MySQL 拷贝，返回每表行数。"""
+    """把源库业务数据**整体覆盖**到目标库（支持任意方向：SQLite↔MySQL）。
+
+    先按逆外键序清空目标各表，再按正序整表拷贝——故切换可逆、可反复迁移。保留自增主键；
+    只写模型声明的真实列（MySQL 的「活跃唯一」生成列不在模型里，插入时由 MySQL 自算）。
+    调用方须保证 dst 不是当前正在使用的库（否则会清空线上数据）。返回每表行数。"""
     counts: dict[str, int] = {}
     with Session(src_engine) as src, Session(dst_engine) as dst:
+        # 1) 逆依赖序清空目标（子表先删，避免外键冲突）
+        for model in reversed(MIGRATION_ORDER):
+            dst.exec(delete(model))
+        dst.commit()
+        # 2) 正依赖序整表拷贝（父表先插）
         for model in MIGRATION_ORDER:
             cols = list(model.__table__.columns.keys())
             rows = src.exec(select(model)).all()
@@ -103,12 +112,3 @@ def copy_data(src_engine, dst_engine) -> dict:
             counts[model.__tablename__] = len(rows)
             log.info("迁移 %s：%d 行", model.__tablename__, len(rows))
     return counts
-
-
-def clear_sqlite_business(sqlite_engine) -> None:
-    """切到 MySQL 后清空 SQLite 里的业务数据（保留 app_db_config 等系统配置）。
-    逆依赖顺序删除，避免外键冲突。"""
-    with Session(sqlite_engine) as s:
-        for model in reversed(MIGRATION_ORDER):
-            s.exec(delete(model))
-        s.commit()

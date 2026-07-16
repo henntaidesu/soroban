@@ -23,13 +23,22 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' \
   || { red "需要 Python 3.11+（插件用到标准库 tomllib）；当前 $(python3 -V)"; exit 1; }
 command -v node >/dev/null || { red "缺少 node（前端需要）"; exit 1; }
 
-# ---- 后端首次设置 ----
+# requirements/package.json 指纹：用系统 python3 算 sha256（跨平台，免依赖 shasum/sha256sum 差异）
+sha256() { python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1"; }
+
+# ---- 后端依赖：venv 不存在则建；requirements 变了(如新增 alembic)则自动同步，避免启动缺库 ----
 if [ ! -d "$BACKEND/.venv" ]; then
-  yellow "首次运行：创建 Python 虚拟环境并安装后端依赖…"
+  yellow "首次运行：创建 Python 虚拟环境…"
   python3 -m venv "$BACKEND/.venv"
   "$PY_BIN" -m pip install --quiet --upgrade pip
+fi
+REQ_STAMP="$BACKEND/.venv/.requirements.sha256"
+REQ_HASH="$(sha256 "$BACKEND/requirements.txt")"
+if [ "$(cat "$REQ_STAMP" 2>/dev/null || true)" != "$REQ_HASH" ]; then
+  yellow "同步后端依赖（首次安装或 requirements 有更新）…"
   "$PY_BIN" -m pip install --quiet -r "$BACKEND/requirements.txt"
-  green "后端依赖已安装。"
+  echo "$REQ_HASH" > "$REQ_STAMP"   # 装成功才落指纹（失败时 set -e 会先退出，不会误记）
+  green "后端依赖已就绪。"
 fi
 
 # .env：不存在则从模板生成，并写入随机 SECRET_KEY
@@ -42,11 +51,14 @@ fi
 # 建/确认 admin 账号（幂等）
 ( cd "$BACKEND" && "$PY_BIN" -m app.seed )
 
-# ---- 前端首次设置 ----
-if [ ! -d "$FRONTEND/node_modules" ]; then
-  yellow "首次运行：安装前端依赖（npm install）…"
+# ---- 前端依赖：node_modules 不存在或 package.json 变了则 npm install，避免启动缺库 ----
+PKG_STAMP="$FRONTEND/node_modules/.package.sha256"
+PKG_HASH="$(sha256 "$FRONTEND/package.json")"
+if [ ! -d "$FRONTEND/node_modules" ] || [ "$(cat "$PKG_STAMP" 2>/dev/null || true)" != "$PKG_HASH" ]; then
+  yellow "同步前端依赖（首次安装或 package.json 有更新）…"
   ( cd "$FRONTEND" && npm install )
-  green "前端依赖已安装。"
+  echo "$PKG_HASH" > "$PKG_STAMP"
+  green "前端依赖已就绪。"
 fi
 
 # ---- 启动 ----

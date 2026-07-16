@@ -80,8 +80,13 @@ def get_engine() -> Engine:
 
 
 def control_engine() -> Engine:
-    """控制引擎（恒 SQLite，存 app_db_config；用于切换后清理 SQLite 业务数据）。"""
+    """控制引擎（恒 SQLite，存 app_db_config；也是「本地 SQLite」这个数据后端本体）。"""
     return _control_engine
+
+
+def control_url() -> str:
+    """本地 SQLite 的连接串（= 控制库）。切回 SQLite 时作为数据引擎 url。"""
+    return _control_url()
 
 
 def current_backend() -> str:

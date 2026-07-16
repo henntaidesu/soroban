@@ -49,11 +49,18 @@
         <el-tag size="small" :style="typeStyle(a.authorized ? 'success' : 'warning')">
           {{ a.authorized ? '已授权' : '未授权' }}
         </el-tag>
+        <el-tag v-if="!a.configured" size="small" :style="typeStyle('info')"
+                title="磁盘上有此账号的登录会话，但未写入插件配置。把它填进上面的「账号」并保存，定时抓取才会带上它。">
+          未入库
+        </el-tag>
         <el-button size="small" link type="primary" :disabled="!p.installed" @click="doLogin(p, a.account)">
           {{ a.authorized ? '重新授权' : '授权登录' }}
         </el-button>
         <el-button size="small" link :disabled="!p.installed || !a.authorized" @click="doFetch(p, a.account)">
           抓这个号
+        </el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">
+          删除
         </el-button>
       </div>
 
@@ -68,7 +75,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import { pluginsApi } from '@/api'
 import { typeStyle } from '@/constants'
@@ -127,6 +134,23 @@ async function doFetch(p, account) {
     await pluginsApi.fetch(p.id, account)
     ElMessage.success(account ? `已触发抓取：${account}` : '已触发抓取（全部账号）')
   } catch (_) { /* 拦截器已提示 */ }
+}
+
+async function doDeleteAccount(p, account) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除账号「${account}」的授权？会删掉本地登录会话并移出配置，之后需重新扫码登录才能再抓这个号。`,
+      '删除账号授权', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch (_) { return }   // 用户取消
+  p._busy = true
+  try {
+    await pluginsApi.deleteAccount(p.id, account)
+    ElMessage.success(`已删除 ${account} 的授权`)
+    await load()
+  } catch (_) { /* 拦截器已提示 */ } finally {
+    p._busy = false
+  }
 }
 
 onMounted(load)

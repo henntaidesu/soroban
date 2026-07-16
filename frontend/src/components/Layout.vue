@@ -32,6 +32,9 @@
           </el-menu-item>
         </el-menu>
 
+        <!-- 迷你计算器：放在「管理员」上方；手机/侧栏收起时不显示 -->
+        <SidebarCalc v-if="!isMobile" />
+
         <div class="foot">
           <div class="fx" v-if="fx.rate">
             1元 = {{ fx.rate }}円
@@ -72,6 +75,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { authApi, fxApi } from '@/api'
 import { typeStyle } from '@/constants'
+import SidebarCalc from '@/components/SidebarCalc.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -162,9 +166,11 @@ async function submitPwd() {
 .menu :deep(.el-menu-item) { margin: 4px 8px; border-radius: 6px; }
 .menu :deep(.el-menu-item.is-active) { background: #1890ff; }
 .foot { padding: 12px 16px; border-top: 1px solid #1c2740; display: flex; flex-direction: column; gap: 8px; }
-.fx { font-size: 13px; color: #9ba8bf; display: flex; align-items: center; gap: 6px; }
+/* 页脚信息行统一：同色(#c7d2e6)、同字号(13)、常规字重 */
+.fx { font-size: 13px; color: #c7d2e6; display: flex; align-items: center; gap: 6px; }
 .user { display: flex; align-items: center; gap: 6px; color: #c7d2e6; font-size: 13px; }
 .foot-btns { display: flex; gap: 8px; }
+.foot-btns :deep(.el-button) { font-size: 13px; }   /* 与汇率/管理员/计算器统一 13px（el small 默认 12px） */
 .content { flex: 1; overflow: auto; padding: 20px; min-width: 0; }
 
 /* —— 手机抽屉：从左滑入 —— */

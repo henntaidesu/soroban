@@ -96,7 +96,8 @@ const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
-const filters = reactive({ status: '', platform_account: '', q: '' })
+// 默认只看「待处理」（抓进来待逐单导入的）；清空筛选或切状态即可看全部/已导入/已忽略
+const filters = reactive({ status: '待处理', platform_account: '', q: '' })
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'

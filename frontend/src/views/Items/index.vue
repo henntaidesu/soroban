@@ -54,7 +54,7 @@
           <span class="ec-dim">下单 {{ editingOrder.date }}</span>
           <span v-if="editingOrder.order_no" class="ec-dim">订单号 {{ editingOrder.order_no }}</span>
         </div>
-        <OrderItemsEditor :order="editingOrder" @saved="editDirty = true" @conflict="refetchEditing" />
+        <OrderEditPanel :order="editingOrder" :shipments="shipmentOptions" :accounts="accountOptions" @saved="editDirty = true" @conflict="refetchEditing" />
       </div>
       <div v-else v-loading="true" style="height: 90px"></div>
     </el-dialog>
@@ -63,10 +63,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { itemsApi, ordersApi, tagsApi } from '@/api'
+import { itemsApi, ordersApi, shipmentApi, tagsApi } from '@/api'
 import { ORDER_SOURCES, ORDER_STATUS, statusStyle, tagStyleAt } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
-import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
+import OrderEditPanel from '@/components/OrderEditPanel.vue'
 
 // 默认列顺序 + 宽度；用户可拖动改序/改宽，持久化到后端（table-name="items"）
 const columns = [
@@ -90,12 +90,14 @@ const page = ref(1)
 const pageSize = 30
 const filters = reactive({ status: '', platform: '', platform_account: '', q: '' })
 
-// 账号标签的持久化配色（与其它页同一套色序，保证同一账号处处同色）
+// 账号标签的持久化配色（与其它页同一套色序，保证同一账号处处同色）+ 账号候选（编辑弹窗下拉用）
 const acctColor = reactive({})
+const accountOptions = ref([])
 async function loadAcctColors() {
   try {
     const tags = await tagsApi.list('platform_account')
     tags.forEach((t) => { acctColor[t.value] = t.color })
+    accountOptions.value = tags.map((t) => t.value)
   } catch (_) { /* 拦截器已提示 */ }
 }
 
@@ -127,6 +129,10 @@ const editVisible = ref(false)
 const editingOrder = ref(null)   // ordersApi.get 拉来的整单（含 items/postage/version/shop）
 const editingId = ref(null)
 const editDirty = ref(false)     // 本次弹窗内是否发生过保存（关窗时据此决定要不要重载列表）
+const shipmentOptions = ref([])  // 供「所属集运」下拉；进页时拉一次
+async function loadShipment() {
+  try { shipmentOptions.value = (await shipmentApi.list({ limit: 200 })).items } catch (_) { /* 已提示 */ }
+}
 const editTitle = computed(() => '编辑物品所属订单' + (editingOrder.value?.order_no ? ' · ' + editingOrder.value.order_no : ''))
 
 async function openEdit(row) {
@@ -151,7 +157,7 @@ function onEditClosed() {
   if (dirty) load()   // 有改动才刷新拍平的物品列表，反映新单价/数量/金额
 }
 
-onMounted(() => { loadAcctColors(); load() })
+onMounted(() => { loadAcctColors(); loadShipment(); load() })
 </script>
 
 <style scoped>

@@ -36,7 +36,6 @@
                        placeholder="包邮" style="width: 130px" @change="savePostage" />
       <span class="postage-hint">不填 = 包邮</span>
     </div>
-    <div class="item-hint">订单人民币 = Σ(单价 × 数量) + 邮费，自动汇总，不在列表直接改。灰色 = 物品名与商品标题相同（无独立物品详情），改成真实物品名即正常。</div>
   </div>
 </template>
 
@@ -119,7 +118,6 @@ async function commitDraft() {
 .item-tbl td.c-act { text-align: center; }
 /* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
 .item-tbl tr.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
-.item-hint { margin-top: 6px; color: #6b7488; font-size: 12px; }
 .postage-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .postage-lb { color: #9ba8bf; font-size: 13px; }
 .postage-hint { color: #6b7488; font-size: 12px; }

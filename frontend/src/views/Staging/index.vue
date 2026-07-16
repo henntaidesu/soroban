@@ -189,7 +189,7 @@ async function addRow(data = {}) {
 async function doImport(row) {
   try {
     await stagingApi.import(row.id)
-    ElMessage.success('已导入到淘宝订单账本')
+    ElMessage.success('已导入到商品订单账本')
     load()
   } catch (e) {
     if (e.response?.status === 409) {

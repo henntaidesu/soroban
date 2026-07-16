@@ -232,7 +232,7 @@ async function doDeleteAccountStaging(p, account) {
 async function doDeleteAccountOrders(p, account) {
   try {
     await ElMessageBox.confirm(
-      `确定删除账号「${account}」名下的全部账本正式淘宝订单？将从账本移除（软删）。不影响暂存记录。`,
+      `确定删除账号「${account}」名下的全部账本正式商品订单？将从账本移除（软删）。不影响暂存记录。`,
       '删除该账号的账本单', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
   } catch (_) { return }

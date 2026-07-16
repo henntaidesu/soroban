@@ -18,7 +18,7 @@
 
         <template #expand="{ row }">
           <div class="expand">
-            <div class="ex-title">关联淘宝订单（在此点选增删；淘宝页「集运(点选)」列也能改）</div>
+            <div class="ex-title">关联商品订单（在此点选增删；商品页「集运(点选)」列也能改）</div>
             <el-table v-if="row.taobao_orders && row.taobao_orders.length" :data="row.taobao_orders" size="small">
               <el-table-column label="下单日期" width="110">
                 <template #default="{ row: t }"><span :class="t.date ? '' : 'ph'">{{ t.date || '—' }}</span></template>
@@ -45,9 +45,9 @@
                 </template>
               </el-table-column>
             </el-table>
-            <div v-else class="ph">暂无关联淘宝订单</div>
+            <div v-else class="ph">暂无关联商品订单</div>
             <div class="add-line">
-              <el-select :model-value="null" filterable placeholder="＋ 添加淘宝订单（未挂靠）"
+              <el-select :model-value="null" filterable placeholder="＋ 添加商品订单（未挂靠）"
                          size="small" class="tb-pick" @change="(id) => attach(row, id)">
                 <el-option v-for="t in unassignedOptions" :key="t.id" :label="t.order_no || ('#' + t.id)" :value="t.id">
                   <div class="tb-opt">
@@ -56,7 +56,7 @@
                   </div>
                 </el-option>
               </el-select>
-              <span v-if="!unassignedOptions.length" class="ph small">没有未挂靠的淘宝订单</span>
+              <span v-if="!unassignedOptions.length" class="ph small">没有未挂靠的商品订单</span>
             </div>
           </div>
         </template>
@@ -79,7 +79,7 @@ import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
 const router = useRouter()
-// 点关联订单的订单号 → 跳到淘宝页、隔离显示该单并自动展开（用 id，兼容无订单号的单）
+// 点关联订单的订单号 → 跳到商品页、隔离显示该单并自动展开（用 id，兼容无订单号的单）
 function gotoOrder(t) { router.push({ path: '/taobao', query: { focus: t.id } }) }
 
 // 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
@@ -100,7 +100,7 @@ const columns = [
   { key: 'special_fee_jpy', label: '特殊费（円）', type: 'int', format: 'jpy', width: 110, placeholder: '关税/消费税' },
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
   { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 110 },
-  { key: 'taobao_orders', label: '淘宝订单', readonly: true, minWidth: 160, expand: true },
+  { key: 'taobao_orders', label: '商品订单', readonly: true, minWidth: 160, expand: true },
 ]
 
 const rows = ref([])

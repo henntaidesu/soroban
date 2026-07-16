@@ -55,45 +55,8 @@
         </template>
 
         <template #expand="{ row }">
-          <div class="expand">
-            <table class="item-tbl">
-              <colgroup>
-                <col class="c-name" />
-                <col class="c-qty" />
-                <col class="c-price" />
-                <col class="c-act" />
-              </colgroup>
-              <thead>
-                <tr><th>物品名</th><th>数量</th><th>单价（元）</th><th></th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(it, i) in (row.items || [])" :key="i" :class="{ 'item-auto': isTitleItem(row, it) }"
-                    :title="isTitleItem(row, it) ? '物品名与商品标题相同（无独立物品详情）；改成真实物品名即变正常色' : ''">
-                  <td><el-input v-model="it.name" size="small" placeholder="物品名" @change="onItemEdit(row, it)" /></td>
-                  <td><el-input-number v-model="it.quantity" :min="1" :controls="false" size="small" @change="onItemEdit(row, it)" /></td>
-                  <td><el-input-number v-model="it.price_cny" :min="0" :precision="2" :controls="false" size="small"
-                                       placeholder="单价" @change="onItemEdit(row, it)" /></td>
-                  <td class="c-act"><el-button link type="danger" :icon="Delete" tabindex="-1" @click="removeItem(row, i)" /></td>
-                </tr>
-                <!-- 末尾草稿行：输入名称并失焦/回车即成为新物品并自动写库，随后又出现空行可继续录入 -->
-                <tr v-if="drafts[row.id]" class="draft-row">
-                  <td><el-input v-model="drafts[row.id].name" size="small" placeholder="+ 新物品名，输入后自动保存"
-                                @change="commitDraft(row)" @keyup.enter="commitDraft(row)" /></td>
-                  <td><el-input-number v-model="drafts[row.id].quantity" :min="1" :controls="false" size="small" /></td>
-                  <td><el-input-number v-model="drafts[row.id].price" :min="0" :precision="2" :controls="false"
-                                       size="small" placeholder="单价" @keyup.enter="commitDraft(row)" /></td>
-                  <td class="c-act"></td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="postage-row">
-              <span class="postage-lb">邮费（元）</span>
-              <el-input-number v-model="row.postage_cny" :min="0" :precision="2" :controls="false" size="small"
-                               placeholder="包邮" style="width: 130px" @change="savePostage(row)" />
-              <span class="postage-hint">不填 = 包邮</span>
-            </div>
-            <div class="item-hint">订单人民币 = Σ(单价 × 数量) + 邮费，自动汇总，不在列表直接改。灰色 = 物品名与商品标题相同（无独立物品详情），改成真实物品名即正常。</div>
-          </div>
+          <!-- 物品/邮费编辑：与物品列表编辑弹窗共用同一组件、同一写入链 -->
+          <OrderItemsEditor :order="row" @conflict="load" />
         </template>
 
       </NotionTable>
@@ -124,11 +87,12 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Camera, Check, Delete } from '@element-plus/icons-vue'
+import { Camera, Check } from '@element-plus/icons-vue'
 import { shipmentApi, ordersApi } from '@/api'
 import { ORDER_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
+import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
 
 // 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
 const today = () => {
@@ -163,8 +127,6 @@ const pageSize = 30
 const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
 const filters = reactive({ range: null, status: '', platform_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
-const drafts = reactive({})   // { rowId: { name, quantity } } 每行末尾的「新物品」草稿输入
-function ensureDraft(id) { if (!drafts[id]) drafts[id] = { name: '', quantity: 1, price: null } }
 
 function shipById(id) { return shipmentOptions.value.find((j) => j.id === id) }
 function shipNo(id) { const j = shipById(id); return j ? (j.shipment_no || ('#' + id)) : ('#' + id) }
@@ -188,10 +150,6 @@ function isTitleItem(row, it) {
 function allTitleItems(row) {
   return !!(row.items && row.items.length) && row.items.every((it) => isTitleItem(row, it))
 }
-function ensureItems(row) {
-  if (!row.items) row.items = []
-  return row.items
-}
 
 async function load() {
   loading.value = true
@@ -206,7 +164,6 @@ async function load() {
     const res = await ordersApi.list(params)
     rows.value = res.items
     total.value = res.total
-    rows.value.forEach((r) => ensureDraft(r.id))
   } finally {
     loading.value = false
   }
@@ -228,54 +185,6 @@ async function saveCell(row, key, value) {
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning(e.response?.data?.detail || '数据已变，已刷新'); load() }
   }
-}
-
-function itemPrice(v) { return (v === '' || v === null || v === undefined) ? null : Number(v) }
-
-async function saveItems(row) {
-  const items = (row.items || []).filter((it) => it.name && it.name.trim())
-    .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1,
-                    price_cny: itemPrice(it.price_cny), auto: !!it.auto }))
-  try {
-    const updated = await ordersApi.update(row.id, { version: row.version, items })
-    Object.assign(row, updated)   // 自动保存：静默写库，不弹提示（返回派生的订单价 + 物品）
-  } catch (e) {
-    if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
-  }
-}
-
-// 编辑任一物品字段 → 该物品转为「已确认」(auto=false，去灰) 并写库
-function onItemEdit(row, it) { it.auto = false; saveItems(row) }
-
-// 邮费改动：写库并让订单价随之重算（不填=包邮）。不覆盖展开面板里未保存的物品编辑
-async function savePostage(row) {
-  try {
-    const updated = await ordersApi.update(row.id, { version: row.version, postage_cny: itemPrice(row.postage_cny) })
-    const { items, ...rest } = updated
-    Object.assign(row, rest)
-  } catch (e) {
-    if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
-  }
-}
-
-// 删除某物品：二次确认后再移除并写库
-async function removeItem(row, i) {
-  const it = row.items?.[i]
-  try {
-    await ElMessageBox.confirm(`删除物品「${it?.name || '未命名'}」？`, '确认', { type: 'warning' })
-  } catch (_) { return }
-  row.items.splice(i, 1)
-  saveItems(row)
-}
-
-// 末尾草稿录入完成：转为正式物品(auto=false)、清空草稿、自动写库；随后草稿行再次出现可继续录入
-async function commitDraft(row) {
-  const d = drafts[row.id]
-  if (!d || !d.name || !d.name.trim()) return
-  ensureItems(row).push({ name: d.name.trim(), quantity: Number(d.quantity) || 1,
-                          price_cny: itemPrice(d.price), auto: false })
-  drafts[row.id] = { name: '', quantity: 1, price: null }
-  await saveItems(row)
 }
 
 // OCR 识别订单截图：抽取快递公司/快递号/订单号/成交价，识别到就新建一行并回填。
@@ -444,7 +353,6 @@ async function addRow(data = {}) {
     const created = await ordersApi.create({ date: today(), ...data })
     rows.value.unshift(created)
     sortRows()                 // 按下单日期归位（OCR 可能录入历史日期，勿留在顶部）
-    ensureDraft(created.id)
     total.value++
     return created
   } catch (e) {
@@ -466,7 +374,6 @@ async function delRow(row) {
   try {
     await ordersApi.remove(row.id)
     rows.value = rows.value.filter((r) => r.id !== row.id)
-    delete drafts[row.id]
     total.value--
     ElMessage.success('已删除')
   } catch (_) { /* 拦截器已提示 */ }
@@ -529,31 +436,7 @@ onBeforeUnmount(() => {
 .focus-chip { font-weight: 500; }
 .focus-empty { color: #9ba8bf; font-size: 13px; padding: 16px; text-align: center; }
 .ph { color: #5b6880; }
-.expand { padding: 12px 20px; }
-/* 二级子表格：视觉与一级列表(NotionTable)一致——同样的边框、行高与悬停；无表头 */
-.item-tbl { border-collapse: collapse; font-size: 13px; color: #d6deea; table-layout: fixed; }
-.item-tbl col.c-name { width: 240px; }
-.item-tbl col.c-qty { width: 90px; }
-.item-tbl col.c-price { width: 120px; }
-.item-tbl col.c-act { width: 56px; }
-.item-tbl thead th { height: 30px; font-weight: 500; color: #7d8aa3; text-align: left; padding: 0 10px; border-bottom: 1px solid #28354a; }
-.item-tbl td { height: 36px; padding: 0; border-bottom: 1px solid #202c44; border-right: 1px solid #28354a; }
-.item-tbl tbody tr:hover td { background: #1b2942; }
-.item-tbl td.c-act { text-align: center; }
-/* 灰显：系统自动生成/自动定价的物品（编辑即去灰） */
-.item-tbl tr.item-auto :deep(.el-input__inner) { color: #6b7488; font-style: italic; }
-.item-hint { margin-top: 6px; color: #6b7488; font-size: 12px; }
 .auto-txt { color: #6b7488; font-style: italic; }   /* 列表「物品」格：自动生成(名=标题)时灰显 */
-.postage-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.postage-lb { color: #9ba8bf; font-size: 13px; }
-.postage-hint { color: #6b7488; font-size: 12px; }
-/* 单元格内输入做成无边框，贴合一级列表的扁平格子观感 */
-.item-tbl :deep(.el-input__wrapper),
-.item-tbl :deep(.el-input-number .el-input__wrapper) {
-  box-shadow: none !important; background: transparent; padding: 0 10px; height: 36px;
-}
-.item-tbl :deep(.el-input-number) { width: 100%; line-height: normal; }
-.item-tbl :deep(.el-input-number .el-input__inner) { text-align: left; }
 /* 集运点选：内嵌无边框，像格子里的选择 */
 .ship-pick { width: 100%; }
 .ship-pick :deep(.el-select__wrapper),

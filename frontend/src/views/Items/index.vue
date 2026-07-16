@@ -5,7 +5,7 @@
     </div>
 
     <el-card>
-      <NotionTable :columns="columns" :rows="rows" :loading="loading"
+      <NotionTable :columns="columns" :rows="rows" :loading="loading" :actions-width="60"
                    table-name="items" hide-id :addable="false" :deletable="false" @reload="load">
         <template #toolbar>
           <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 120px" @change="reload">
@@ -34,19 +34,39 @@
         <template #cell-name="{ row }">
           <span :class="{ 'auto-txt': isTitleItem(row) }" :title="isTitleItem(row) ? '物品名与商品标题相同（无独立物品详情）' : ''">{{ row.name }}</span>
         </template>
+        <!-- 编辑：打开该物品所属订单的编辑弹窗（复用商品订单同一套物品编辑，不跳转） -->
+        <template #actions="{ row }">
+          <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+        </template>
       </NotionTable>
 
       <el-pagination class="pager" layout="prev, pager, next, total" :total="total"
                      :page-size="pageSize" :current-page="page" @current-change="onPage" />
     </el-card>
+
+    <!-- 物品编辑：改的是该物品所属的整张商品订单（含其全部物品 + 邮费），复用订单页同一编辑组件与写入链 -->
+    <el-dialog v-model="editVisible" :title="editTitle" width="640px" top="6vh" append-to-body @closed="onEditClosed">
+      <div v-if="editingOrder">
+        <div class="edit-ctx">
+          <span class="ec-shop">{{ editingOrder.shop || '（无标题）' }}</span>
+          <el-tag size="small" :style="statusStyle(editingOrder.status)">{{ editingOrder.status }}</el-tag>
+          <span v-if="editingOrder.platform_account" class="ec-dim">账号 {{ editingOrder.platform_account }}</span>
+          <span class="ec-dim">下单 {{ editingOrder.date }}</span>
+          <span v-if="editingOrder.order_no" class="ec-dim">订单号 {{ editingOrder.order_no }}</span>
+        </div>
+        <OrderItemsEditor :order="editingOrder" @saved="editDirty = true" @conflict="refetchEditing" />
+      </div>
+      <div v-else v-loading="true" style="height: 90px"></div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { itemsApi, tagsApi } from '@/api'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { itemsApi, ordersApi, tagsApi } from '@/api'
 import { ORDER_SOURCES, ORDER_STATUS, statusStyle, tagStyleAt } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
+import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
 
 // 默认列顺序 + 宽度；用户可拖动改序/改宽，持久化到后端（table-name="items"）
 const columns = [
@@ -102,6 +122,35 @@ function isTitleItem(row) {
   return !!row.name && (row.name || '').trim() === (row.shop || '').trim()
 }
 
+// —— 编辑：打开该物品所属订单，复用 OrderItemsEditor（同一写入链）——
+const editVisible = ref(false)
+const editingOrder = ref(null)   // ordersApi.get 拉来的整单（含 items/postage/version/shop）
+const editingId = ref(null)
+const editDirty = ref(false)     // 本次弹窗内是否发生过保存（关窗时据此决定要不要重载列表）
+const editTitle = computed(() => '编辑物品所属订单' + (editingOrder.value?.order_no ? ' · ' + editingOrder.value.order_no : ''))
+
+async function openEdit(row) {
+  editDirty.value = false
+  editingOrder.value = null
+  editingId.value = row.order_id
+  editVisible.value = true
+  try {
+    editingOrder.value = await ordersApi.get(row.order_id)
+  } catch (_) {
+    editVisible.value = false   // 订单可能已删/无权限；拦截器已提示
+  }
+}
+// 409：订单被并发改过 → 拉最新，让用户在最新基础上继续改
+async function refetchEditing() {
+  editDirty.value = true
+  if (editingId.value) { try { editingOrder.value = await ordersApi.get(editingId.value) } catch (_) { /* 已提示 */ } }
+}
+function onEditClosed() {
+  const dirty = editDirty.value
+  editingOrder.value = null; editingId.value = null; editDirty.value = false
+  if (dirty) load()   // 有改动才刷新拍平的物品列表，反映新单价/数量/金额
+}
+
 onMounted(() => { loadAcctColors(); load() })
 </script>
 
@@ -111,4 +160,7 @@ onMounted(() => { loadAcctColors(); load() })
 .pager { margin-top: 12px; justify-content: flex-end; }
 .ph { color: #5b6880; }
 .auto-txt { color: #6b7488; font-style: italic; }
+.edit-ctx { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 20px 4px; font-size: 13px; }
+.edit-ctx .ec-shop { color: #e6edf7; font-weight: 600; }
+.edit-ctx .ec-dim { color: #7d8aa3; font-size: 12px; }
 </style>

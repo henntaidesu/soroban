@@ -26,6 +26,7 @@ class TaobaoStaging(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     order_no: Optional[str] = Field(default=None, max_length=64)  # 可空：手动新建空行后再填
     taobao_account: Optional[str] = Field(default=None, max_length=64)
+    platform: Optional[str] = Field(default=None, max_length=32)  # 来源平台（淘宝/闲鱼/京东）；淘宝插件抓取即「淘宝」，导入时随单迁移到账本
     shop: Optional[str] = Field(default=None, max_length=255)
     price_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)
     fx_rate: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)  # 新建/抓取时记当天汇率，导入一同迁移

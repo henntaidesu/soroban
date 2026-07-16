@@ -71,6 +71,9 @@ export const pluginsApi = {
   deleteAccount: (id, account) => http.delete(`/plugins/${id}/account`, { params: { account } }),
   renameAccount: (id, oldName, newName) =>
     http.post(`/plugins/${id}/account/rename`, null, { params: { old: oldName, new: newName } }),
+  // 按账号删订单：暂存(全部订单页) / 账本(淘宝订单页，软删)
+  deleteAccountStaging: (id, account) => http.delete(`/plugins/${id}/account/staging`, { params: { account } }),
+  deleteAccountOrders: (id, account) => http.delete(`/plugins/${id}/account/orders`, { params: { account } }),
 }
 
 // 数据库迁移/切换（SQLite ↔ MySQL，双向）。target 三选一：
@@ -91,4 +94,9 @@ export const tagsApi = {
   list: (field) => http.get(`/tags/${field}`),
   add: (field, value) => http.post(`/tags/${field}`, { value }),
   remove: (field, value) => http.delete(`/tags/${field}/${encodeURIComponent(value)}`),
+  // 改名：taobao_account 牵连插件磁盘会话/配置 → 走插件全链路端点；其它字段走通用标签改名
+  rename: (field, oldVal, newVal) =>
+    field === 'taobao_account'
+      ? http.post(`/plugins/taobao/account/rename`, null, { params: { old: oldVal, new: newVal } })
+      : http.post(`/tags/${field}/rename`, null, { params: { old: oldVal, new: newVal } }),
 }

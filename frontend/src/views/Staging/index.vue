@@ -6,7 +6,7 @@
 
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
-                   table-name="staging" :actions-width="128" @save="saveCell" @add="addRow" @delete="doDelete">
+                   table-name="staging" :actions-width="128" @save="saveCell" @add="addRow" @delete="doDelete" @reload="load">
         <template #toolbar>
           <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 130px" @change="reload">
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
@@ -62,7 +62,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { stagingApi } from '@/api'
-import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
+import { ORDER_SOURCES, STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 // 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
@@ -70,6 +70,7 @@ const COL_W = 110
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: COL_W },
   { key: 'taobao_account', label: '淘宝号', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'platform', label: '来源', type: 'select', options: ORDER_SOURCES, width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },   // 标题长：点开弹宽框看全
   { key: 'price_cny', label: '人民币（元）', type: 'decimal', format: 'cny', width: COL_W, placeholder: '实付人民币' },
   { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: COL_W },

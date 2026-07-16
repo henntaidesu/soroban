@@ -341,6 +341,7 @@ class StagingItemRead(SQLModel):
 class StagingBase(SQLModel):
     order_no: Optional[str] = None
     taobao_account: Optional[str] = None
+    platform: Optional[str] = None           # 来源平台（淘宝/闲鱼/京东）；导入时随单迁移到账本
     shop: Optional[str] = None
     price_cny: Optional[Decimal] = None
     fx_rate: Optional[Decimal] = None

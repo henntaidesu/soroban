@@ -36,6 +36,7 @@ _SHARED_TO_ORDER = {
     "order_no": "order_no",
     "shop": "shop",
     "taobao_account": "taobao_account",
+    "platform": "platform",
     "express_no": "express_no",
     "price_cny": "price_cny",
     "fx_rate": "fx_rate",
@@ -201,6 +202,7 @@ def import_staging(row_id: int, session: Session = Depends(get_session)):
         order_no=row.order_no,
         shop=row.shop,
         taobao_account=row.taobao_account,
+        platform=row.platform,               # 来源随单迁移到账本
         express_no=row.express_no,
         price_cny=row.price_cny,
         fx_rate=row.fx_rate or rate_for_date(session, row.order_date),  # 优先暂存记录的汇率；否则按下单日期匹配

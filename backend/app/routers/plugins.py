@@ -25,7 +25,12 @@ from ..config import settings
 from ..database import get_engine, get_session
 from ..models import PluginConfig, User, utcnow
 from ..schemas import PluginConfigIn
-from .tags import rename_taobao_account, taobao_account_in_use
+from .tags import (
+    delete_account_staging,
+    rename_tag_value,
+    soft_delete_account_orders,
+    tag_value_in_use,
+)
 
 log = logging.getLogger("soroban.plugins")
 
@@ -270,14 +275,16 @@ def rename_account(
         raise HTTPException(status_code=400, detail="新账号名不能为空、且不能含逗号（逗号是账号分隔符）。")
     _state_file(m, new)                                     # 校验 new 是合法文件名（目录穿越/非法名 → 400）
     cfg = session.get(PluginConfig, plugin_id)
-    if old not in _merge_accounts(cfg, m):
-        raise HTTPException(status_code=404, detail=f"该插件下没有账号：{old}")
+    # old 有效 = 配置/磁盘里的账号，或历史数据/标签里出现过（列头改名可能改一个只存在于旧订单的账号）
+    if old not in _merge_accounts(cfg, m) and not tag_value_in_use(session, "taobao_account", old):
+        raise HTTPException(status_code=404, detail=f"没有这个账号：{old}")
     if new == old:
         return {"ok": True, "unchanged": True}
-    if new in _merge_accounts(cfg, m) or taobao_account_in_use(session, new):
+    if new in _merge_accounts(cfg, m) or tag_value_in_use(session, "taobao_account", new):
         raise HTTPException(status_code=409, detail=f"新名字已被占用（已有账号/数据/授权）：{new}")
     # 1) 一个事务：数据 + 标签 + 配置一起改
-    counts = rename_taobao_account(session, old, new)
+    raw = rename_tag_value(session, "taobao_account", old, new)
+    counts = {"staging": raw.get("TaobaoStaging", 0), "orders": raw.get("TaobaoOrder", 0)}
     if cfg and old in _accounts(cfg):
         try:
             params = json.loads(cfg.params_json)
@@ -296,6 +303,43 @@ def rename_account(
         log.warning("改名 %s→%s 后会话文件重命名失败：%s", old, new, e)
         return {"ok": True, "moved_session": False, **counts,
                 "warning": "订单数据已改名，但本地登录会话重命名失败，请在新名字下重新扫码登录。"}
+
+
+def _require_taobao_account(m: dict, session: Session, account: str) -> None:
+    """校验：淘宝插件 + account 确为已知账号（配置/磁盘/历史数据里出现过）。否则 400/404。"""
+    if m.get("platform") != "taobao":
+        raise HTTPException(status_code=400, detail="该插件不支持按账号删除订单。")
+    cfg = session.get(PluginConfig, m["id"])
+    if account not in _merge_accounts(cfg, m) and not tag_value_in_use(session, "taobao_account", account):
+        raise HTTPException(status_code=404, detail=f"没有这个账号：{account}")
+
+
+@router.delete("/{plugin_id}/account/staging")
+def delete_account_staging_ep(
+    plugin_id: str,
+    account: str = Query(..., description="要清空暂存的账号"),
+    session: Session = Depends(get_session),
+):
+    """删除该账号在「全部订单」暂存表里的所有行（含物品明细）。不动账本正式订单。"""
+    m = _find(plugin_id)
+    _require_taobao_account(m, session, account)
+    n = delete_account_staging(session, account)
+    session.commit()
+    return {"ok": True, "deleted": n}
+
+
+@router.delete("/{plugin_id}/account/orders")
+def delete_account_orders_ep(
+    plugin_id: str,
+    account: str = Query(..., description="要软删账本订单的账号"),
+    session: Session = Depends(get_session),
+):
+    """软删该账号名下的所有账本正式淘宝订单（从账本移除、可在数据库层恢复）。不动暂存。"""
+    m = _find(plugin_id)
+    _require_taobao_account(m, session, account)
+    n = soft_delete_account_orders(session, account)
+    session.commit()
+    return {"ok": True, "deleted": n}
 
 
 # --- 定时调度：按每个启用插件的 schedule_minutes 周期触发 fetch --------------

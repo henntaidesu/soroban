@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable
-                   table-name="shipment" @save="saveCell" @add="addRow" @delete="delRow">
+                   table-name="shipment" @save="saveCell" @add="addRow" @delete="delRow" @reload="load">
         <template #toolbar>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
                           start-placeholder="起" end-placeholder="止" @change="reload" />

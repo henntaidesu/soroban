@@ -62,6 +62,12 @@
         <el-button size="small" link @click="doRenameAccount(p, a.account)">
           改名
         </el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccountStaging(p, a.account)">
+          删暂存单
+        </el-button>
+        <el-button size="small" link type="danger" @click="doDeleteAccountOrders(p, a.account)">
+          删账本单
+        </el-button>
         <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">
           删除
         </el-button>
@@ -176,6 +182,38 @@ async function doDeleteAccount(p, account) {
     await pluginsApi.deleteAccount(p.id, account)
     ElMessage.success(`已删除 ${account} 的授权`)
     await load()
+  } catch (_) { /* 拦截器已提示 */ } finally {
+    p._busy = false
+  }
+}
+
+async function doDeleteAccountStaging(p, account) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除账号「${account}」在「全部订单」里的全部暂存记录（含物品明细）？此操作不可恢复，且不影响已进账本的正式订单。`,
+      '删除该账号的暂存单', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch (_) { return }
+  p._busy = true
+  try {
+    const r = await pluginsApi.deleteAccountStaging(p.id, account)
+    ElMessage.success(`已删除 ${account} 的暂存单 ${r.deleted} 条`)
+  } catch (_) { /* 拦截器已提示 */ } finally {
+    p._busy = false
+  }
+}
+
+async function doDeleteAccountOrders(p, account) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除账号「${account}」名下的全部账本正式淘宝订单？将从账本移除（软删）。不影响暂存记录。`,
+      '删除该账号的账本单', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch (_) { return }
+  p._busy = true
+  try {
+    const r = await pluginsApi.deleteAccountOrders(p.id, account)
+    ElMessage.success(`已删除 ${account} 的账本单 ${r.deleted} 条`)
   } catch (_) { /* 拦截器已提示 */ } finally {
     p._busy = false
   }

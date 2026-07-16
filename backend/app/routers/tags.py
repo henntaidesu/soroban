@@ -8,14 +8,23 @@
 
 from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
 from ..db.dialect import insert_or_ignore
-from ..models import ShipmentOrder, StagingStatus, TagOption, TaobaoOrder, TaobaoStaging, utcnow
+from ..models import (
+    ShipmentOrder,
+    StagingItem,
+    StagingStatus,
+    TagOption,
+    TaobaoOrder,
+    TaobaoStaging,
+    utcnow,
+)
 from ..schemas import TagIn, TagOut
 
 router = APIRouter(
@@ -127,37 +136,40 @@ def add_tag(field: str, payload: TagIn, session: Session = Depends(get_session))
     return _list(session, field)
 
 
-# --- 供插件「账号改名」复用：把一个淘宝账号值跨表迁移（数据+标签），供 plugins 路由在同一事务里调用 -------
+# --- 标签值改名：跨表迁移（数据 + 标签），供本路由的 /rename 与 plugins 路由在同一事务里复用 -------
 
-def taobao_account_in_use(session: Session, name: str) -> bool:
-    """name 是否已被某淘宝账号占用：暂存/账本里有该值的行，或已登记为标签。用于改名前防重名。"""
-    for model in (TaobaoStaging, TaobaoOrder):
-        if session.exec(select(model.id).where(model.taobao_account == name).limit(1)).first() is not None:
+def tag_value_in_use(session: Session, field: str, name: str) -> bool:
+    """name 是否已被该标签字段占用：对应数据表（见 _FIELD_SOURCES）里有此值的行，或已登记为标签。改名前防重名用。"""
+    for model, col in _FIELD_SOURCES.get(field, ()):
+        if session.exec(select(model.id).where(col == name).limit(1)).first() is not None:
             return True
     return session.exec(
-        select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == name)
+        select(TagOption).where(TagOption.field == field, TagOption.value == name)
     ).first() is not None
 
 
-def rename_taobao_account(session: Session, old: str, new: str) -> dict:
-    """把淘宝账号从 old 改成 new，跨表迁移（**不提交**，由调用方在同一事务里 commit）：
-      · 暂存 TaobaoStaging + 账本 TaobaoOrder 的 taobao_account，version 自增（守住乐观锁纪律）；
+def rename_tag_value(session: Session, field: str, old: str, new: str) -> dict:
+    """把标签字段 field 的值从 old 改成 new，跨表迁移（**不提交**，由调用方在同一事务里 commit）：
+      · 该字段对应的数据表（见 _FIELD_SOURCES）的列值，version/updated_at 自增（守住乐观锁纪律）；
       · 标签 TagOption 直接改值以**保住原颜色**（new 已有标签则合并、弃 old）。
-    返回改动行数 {staging, orders}。"""
+    返回各数据表改动行数（键为模型名）。"""
     now = utcnow()
     counts = {}
-    for key, model in (("staging", TaobaoStaging), ("orders", TaobaoOrder)):
-        counts[key] = session.execute(
-            sa_update(model)
-            .where(model.taobao_account == old)
-            .values(taobao_account=new, version=model.version + 1, updated_at=now)
+    for model, col in _FIELD_SOURCES.get(field, ()):
+        vals = {col.key: new}
+        if hasattr(model, "version"):
+            vals["version"] = model.version + 1
+        if hasattr(model, "updated_at"):
+            vals["updated_at"] = now
+        counts[model.__name__] = session.execute(
+            sa_update(model).where(col == old).values(**vals)
         ).rowcount
     old_tag = session.exec(
-        select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == old)
+        select(TagOption).where(TagOption.field == field, TagOption.value == old)
     ).first()
     if old_tag:
         new_tag = session.exec(
-            select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == new)
+            select(TagOption).where(TagOption.field == field, TagOption.value == new)
         ).first()
         if new_tag:                       # new 已有标签 → 合并：留 new 的颜色，删 old
             session.delete(old_tag)
@@ -165,6 +177,44 @@ def rename_taobao_account(session: Session, old: str, new: str) -> dict:
             old_tag.value = new
             session.add(old_tag)
     return counts
+
+
+def delete_account_staging(session: Session, account: str) -> int:
+    """硬删某淘宝账号名下的全部暂存行（TaobaoStaging）连同其物品（StagingItem）。
+    先删子表再删父表以满足外键；**不提交**，由调用方在同一事务里 commit。返回删除的暂存行数。"""
+    ids = session.exec(
+        select(TaobaoStaging.id).where(TaobaoStaging.taobao_account == account)
+    ).all()
+    if ids:
+        session.execute(sa_delete(StagingItem).where(StagingItem.staging_id.in_(ids)))
+        session.execute(sa_delete(TaobaoStaging).where(TaobaoStaging.id.in_(ids)))
+    return len(ids)
+
+
+def soft_delete_account_orders(session: Session, account: str) -> int:
+    """软删某淘宝账号名下的全部账本订单（TaobaoOrder）：is_delete=True、version/updated_at 自增
+    （与单条删除同语义、守乐观锁纪律）。已软删的跳过。**不提交**。返回受影响行数。
+
+    对齐单条 delete_order：软删后把「由这些订单导入而来」的暂存行挂靠清掉、状态回「待处理」，
+    避免暂存行永远卡在「已导入」且指向已删订单、无法重新导入（否则即数据「损耗」）。"""
+    now = utcnow()
+    ids = session.exec(
+        select(TaobaoOrder.id).where(
+            TaobaoOrder.taobao_account == account, TaobaoOrder.is_delete.is_(False)
+        )
+    ).all()
+    if not ids:
+        return 0
+    session.execute(
+        sa_update(TaobaoOrder).where(TaobaoOrder.id.in_(ids))
+        .values(is_delete=True, version=TaobaoOrder.version + 1, updated_at=now)
+    )
+    session.execute(
+        sa_update(TaobaoStaging).where(TaobaoStaging.imported_taobao_order_id.in_(ids))
+        .values(imported_taobao_order_id=None, status=StagingStatus.pending.value,
+                version=TaobaoStaging.version + 1, updated_at=now)
+    )
+    return len(ids)
 
 
 @router.delete("/{field}/{value:path}", response_model=list[TagOut])
@@ -178,4 +228,30 @@ def remove_tag(field: str, value: str, session: Session = Depends(get_session)):
     if row:
         session.delete(row)
         session.commit()
+    return _list(session, field)
+
+
+@router.post("/{field}/rename", response_model=list[TagOut])
+def rename_tag(
+    field: str,
+    old: str = Query(..., description="原标签值"),
+    new: str = Query(..., description="新标签值"),
+    session: Session = Depends(get_session),
+):
+    """标签改名：把用到该值的订单迁到新值、并保留标签颜色。
+    taobao_account 牵连插件磁盘会话/配置，须走插件端点（/api/plugins/taobao/account/rename），此处拒绝。"""
+    _check_field(field)
+    if field == "taobao_account":
+        raise HTTPException(status_code=400, detail="淘宝账号改名请走插件端点（含磁盘会话/配置迁移）。")
+    new = new.strip()
+    if not new:
+        raise HTTPException(status_code=422, detail="新名字不能为空")
+    if new == old:
+        return _list(session, field)
+    if not tag_value_in_use(session, field, old):
+        raise HTTPException(status_code=404, detail=f"没有这个标签：{old}")
+    if tag_value_in_use(session, field, new):
+        raise HTTPException(status_code=409, detail=f"新名字已被占用：{new}")
+    rename_tag_value(session, field, old, new)
+    session.commit()
     return _list(session, field)

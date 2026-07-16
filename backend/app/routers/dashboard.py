@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
+from ..db.dialect import is_mysql
 from ..models import EXCLUDED_STATUSES, ShipmentOrder, MiscExpense, TaobaoOrder
 from ..schemas import DashboardRead, MonthTotal
 from ..services.fx import current_rate
@@ -40,9 +41,16 @@ def _count(session: Session, model, has_status: bool) -> int:
     return int(session.exec(select(func.count()).select_from(model).where(*conds)).one())
 
 
+def _month_expr(session: Session, date_col):
+    """按月分组的 '%Y-%m' 表达式，跨方言：MySQL 用 DATE_FORMAT，SQLite 用 strftime。"""
+    if is_mysql(session.get_bind()):
+        return func.date_format(date_col, "%Y-%m")
+    return func.strftime("%Y-%m", date_col)
+
+
 def _by_month(session: Session, model, has_status: bool, bucket: dict) -> None:
     conds = _valid_conds(model, has_status)
-    month = func.strftime("%Y-%m", model.date)
+    month = _month_expr(session, model.date)
     rows = session.exec(
         select(month, func.coalesce(func.sum(model.jpy_settled), 0))
         .where(*conds)

@@ -30,11 +30,14 @@
                   <div class="gtn-tagmgr" @mousedown.stop @click.stop>
                     <div class="gtn-tagmgr-title">{{ col.label }} · 标签（列头管理）</div>
                     <div class="gtn-tag-list">
-                      <el-tag v-for="v in (tagOptions[col.field] || [])" :key="v" size="small"
-                              :style="tagStyleAt(tagMeta[col.field]?.[v]?.color ?? -1, v)"
-                              :closable="!(tagMeta[col.field]?.[v]?.in_use)"
-                              :title="tagMeta[col.field]?.[v]?.in_use ? '使用中，不可删除' : ''"
-                              @close="removeTag(col.field, v)">{{ v }}</el-tag>
+                      <span v-for="v in (tagOptions[col.field] || [])" :key="v" class="gtn-tag-item">
+                        <el-tag size="small"
+                                :style="tagStyleAt(tagMeta[col.field]?.[v]?.color ?? -1, v)"
+                                :closable="!(tagMeta[col.field]?.[v]?.in_use)"
+                                :title="tagMeta[col.field]?.[v]?.in_use ? '使用中，不可删除' : ''"
+                                @close="removeTag(col.field, v)">{{ v }}</el-tag>
+                        <el-icon class="gtn-tag-edit" title="改名" @click="renameTag(col.field, v)"><Edit /></el-icon>
+                      </span>
                       <span v-if="!(tagOptions[col.field] || []).length" class="gtn-tag-empty">暂无标签</span>
                     </div>
                     <div v-if="Object.values(tagMeta[col.field] || {}).some((t) => t.in_use)" class="gtn-tag-hint">
@@ -98,8 +101,8 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, useSlots, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { ArrowRight, Check, Delete, Plus, Setting } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowRight, Check, Delete, Edit, Plus, Setting } from '@element-plus/icons-vue'
 import GotionCell from './GotionCell.vue'
 import { layoutApi, tagsApi } from '@/api'
 import { tagStyleAt } from '@/constants'
@@ -115,7 +118,7 @@ const props = defineProps({
   openId: { type: [Number, String], default: null },   // 设置后自动展开该 id 的行（供跨页跳转定位）
   hideId: { type: Boolean, default: false },   // 隐藏最左「ID」列的编号与表头（仍保留该窄列的新建/删除操作）
 })
-const emit = defineEmits(['save', 'add', 'delete'])
+const emit = defineEmits(['save', 'add', 'delete', 'reload'])
 const slots = useSlots()
 
 const DEFAULT_COL_W = 160   // 无显式 width 的列默认宽
@@ -205,6 +208,29 @@ async function removeTag(field, value) {
   } catch (e) {
     // 409（使用中不可删）被拦截器刻意跳过，这里自行提示；其余错误拦截器已提示
     if (e.response?.status === 409) ElMessage.warning(e.response?.data?.detail || '该标签使用中，不能删除')
+  }
+}
+async function renameTag(field, oldVal) {
+  let value
+  try {
+    const r = await ElMessageBox.prompt(
+      `把标签「${oldVal}」改成新名字。会一并把用到它的订单迁到新名字、并保留颜色。`,
+      '标签改名',
+      { confirmButtonText: '改名', cancelButtonText: '取消', inputValue: oldVal,
+        inputValidator: (v) => (!!v && !!v.trim()) || '名字不能为空' },
+    )
+    value = r.value.trim()
+  } catch (_) { return }   // 取消
+  if (!value || value === oldVal) return
+  try {
+    const res = await tagsApi.rename(field, oldVal, value)
+    if (res && res.warning) ElMessage.warning(res.warning)
+    else ElMessage.success(`已改名为「${value}」`)
+    await loadTag(field)   // 刷新下拉集（颜色/在用状态）
+    emit('reload')         // 通知父页重拉行数据，让已用到该标签的单元格显示新值
+  } catch (e) {
+    // 409（新名占用）被拦截器刻意跳过，这里自行提示；其余错误拦截器已提示
+    if (e.response?.status === 409) ElMessage.warning(e.response?.data?.detail || '新名字已被占用')
   }
 }
 
@@ -326,6 +352,9 @@ function stopResize() {
 .gtn-tagcfg:hover { color: #67c23a; }
 .gtn-tagmgr-title { color: #9ba8bf; font-size: 12px; margin-bottom: 8px; }
 .gtn-tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.gtn-tag-item { display: inline-flex; align-items: center; gap: 2px; }
+.gtn-tag-edit { color: #6b7a93; font-size: 12px; cursor: pointer; }
+.gtn-tag-edit:hover { color: #8ab4ff; }
 .gtn-tag-empty { color: #5b6880; font-size: 12px; }
 .gtn-tag-hint { color: #6b7a93; font-size: 11px; margin-bottom: 8px; }
 .gtn-tag-add { display: flex; gap: 6px; }

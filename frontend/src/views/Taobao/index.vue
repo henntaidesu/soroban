@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable hide-id :open-id="focusId"
-                   table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow">
+                   table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow" @reload="load">
         <template #toolbar>
           <el-upload ref="ocrUpload" class="ocr-up" multiple :show-file-list="false" :auto-upload="false"
                      accept="image/*" :on-change="onOcrPick">

@@ -11,8 +11,8 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import ShipmentOrder, TaobaoOrder, utcnow
-from ..schemas import ShipmentCreate, ShipmentRead, ShipmentUpdate, OrderItemRead, TaobaoBrief
+from ..models import ShipmentOrder, Order, utcnow
+from ..schemas import ShipmentCreate, ShipmentRead, ShipmentUpdate, OrderItemRead, OrderBrief
 from .common import conflict, guarded_bump, not_found, soft_delete
 
 router = APIRouter(
@@ -21,18 +21,18 @@ router = APIRouter(
 
 
 def _read(session: Session, order: ShipmentOrder) -> ShipmentRead:
-    """构造响应，其中 taobao_orders 只含未软删的关联淘宝订单（不泄露已删数据）。"""
+    """构造响应，其中 orders 只含未软删的关联淘宝订单（不泄露已删数据）。"""
     r = ShipmentRead.model_validate(order)
     children = session.exec(
-        select(TaobaoOrder)
+        select(Order)
         .where(
-            TaobaoOrder.shipment_order_id == order.id,
-            TaobaoOrder.is_delete.is_(False),
+            Order.shipment_order_id == order.id,
+            Order.is_delete.is_(False),
         )
-        .options(selectinload(TaobaoOrder.items))   # 批量载入子订单物品，避免 N+1
+        .options(selectinload(Order.items))   # 批量载入子订单物品，避免 N+1
     ).all()
-    r.taobao_orders = [
-        TaobaoBrief(id=c.id, order_no=c.order_no, date=c.date, shop=c.shop,
+    r.orders = [
+        OrderBrief(id=c.id, order_no=c.order_no, date=c.date, shop=c.shop,
                     status=c.status, jpy_settled=c.jpy_settled,
                     items=[OrderItemRead(id=it.id, name=it.name, quantity=it.quantity) for it in c.items])
         for c in children
@@ -112,53 +112,53 @@ def update_order(order_id: int, payload: ShipmentUpdate, session: Session = Depe
     return _read(session, order)
 
 
-@router.post("/{shipment_id}/taobao/{tb_id}", response_model=ShipmentRead)
-def attach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_session)):
-    """把一个淘宝订单挂到本集运单（点选添加）。同一个外键 shipment_order_id，与淘宝页共用。
-    仅允许「未挂靠」的淘宝单：已挂在别的集运单 → 422（先移除再加，防误抢）。"""
+@router.post("/{shipment_id}/order/{order_id}", response_model=ShipmentRead)
+def attach_order(shipment_id: int, order_id: int, session: Session = Depends(get_session)):
+    """把一个商品订单挂到本集运单（点选添加）。同一个外键 shipment_order_id，与商品页共用。
+    仅允许「未挂靠」的商品单：已挂在别的集运单 → 422（先移除再加，防误抢）。"""
     shipment = session.get(ShipmentOrder, shipment_id)
     if not shipment or shipment.is_delete:
         not_found("集运订单")
-    tb = session.get(TaobaoOrder, tb_id)
-    if not tb or tb.is_delete:
-        not_found("淘宝订单")
-    if tb.shipment_order_id == shipment_id:
+    od = session.get(Order, order_id)
+    if not od or od.is_delete:
+        not_found("商品订单")
+    if od.shipment_order_id == shipment_id:
         return _read(session, shipment)               # 已挂本单，幂等
-    # 原子挂载：仅当淘宝单在 DB 里仍未挂靠（且未软删）、且集运单当前仍存活时才成功，靠 rowcount 判定。
+    # 原子挂载：仅当商品单在 DB 里仍未挂靠（且未软删）、且集运单当前仍存活时才成功，靠 rowcount 判定。
     # 避免「读-判断-写」在并发下双挂/误抢；EXISTS 子查询防极小竞态窗内集运单被并发软删导致挂到已删单；
     # version 在 DB 层自增，不丢失并发的自增（与 guarded_bump 同风格）。
     res = session.execute(
-        sa_update(TaobaoOrder)
+        sa_update(Order)
         .where(
-            TaobaoOrder.id == tb_id,
-            TaobaoOrder.shipment_order_id.is_(None),
-            TaobaoOrder.is_delete.is_(False),
+            Order.id == order_id,
+            Order.shipment_order_id.is_(None),
+            Order.is_delete.is_(False),
             select(ShipmentOrder.id)
             .where(ShipmentOrder.id == shipment_id, ShipmentOrder.is_delete.is_(False))
             .exists(),
         )
-        .values(shipment_order_id=shipment_id, version=TaobaoOrder.version + 1, updated_at=utcnow())
+        .values(shipment_order_id=shipment_id, version=Order.version + 1, updated_at=utcnow())
     )
     if res.rowcount != 1:                             # 已被并发挂到别的集运单，或集运单已被并发删除
-        raise HTTPException(status_code=422, detail="该淘宝订单已挂靠其他集运单，请先移除")
+        raise HTTPException(status_code=422, detail="该商品订单已挂靠其他集运单，请先移除")
     session.commit()
     return _read(session, shipment)
 
 
-@router.delete("/{shipment_id}/taobao/{tb_id}", response_model=ShipmentRead)
-def detach_taobao(shipment_id: int, tb_id: int, session: Session = Depends(get_session)):
-    """从本集运单移除一个淘宝订单（解除外键）。仅当它确实挂在本单才动（幂等）。"""
+@router.delete("/{shipment_id}/order/{order_id}", response_model=ShipmentRead)
+def detach_order(shipment_id: int, order_id: int, session: Session = Depends(get_session)):
+    """从本集运单移除一个商品订单（解除外键）。仅当它确实挂在本单才动（幂等）。"""
     shipment = session.get(ShipmentOrder, shipment_id)
     if not shipment or shipment.is_delete:
         not_found("集运订单")
-    tb = session.get(TaobaoOrder, tb_id)
-    if not tb or tb.is_delete:
-        not_found("淘宝订单")
+    od = session.get(Order, order_id)
+    if not od or od.is_delete:
+        not_found("商品订单")
     # 原子解除：仅当它确实挂在本单才动（幂等）；version 在 DB 层自增，不丢并发自增。
     session.execute(
-        sa_update(TaobaoOrder)
-        .where(TaobaoOrder.id == tb_id, TaobaoOrder.shipment_order_id == shipment_id)
-        .values(shipment_order_id=None, version=TaobaoOrder.version + 1, updated_at=utcnow())
+        sa_update(Order)
+        .where(Order.id == order_id, Order.shipment_order_id == shipment_id)
+        .values(shipment_order_id=None, version=Order.version + 1, updated_at=utcnow())
     )
     session.commit()
     return _read(session, shipment)
@@ -171,9 +171,9 @@ def delete_order(order_id: int, session: Session = Depends(get_session)):
         not_found("集运订单")
     # 解除关联淘宝订单的挂靠，避免留下指向已删集运单的悬空外键
     session.execute(
-        sa_update(TaobaoOrder)
-        .where(TaobaoOrder.shipment_order_id == order_id, TaobaoOrder.is_delete.is_(False))
-        .values(shipment_order_id=None, version=TaobaoOrder.version + 1, updated_at=utcnow())
+        sa_update(Order)
+        .where(Order.shipment_order_id == order_id, Order.is_delete.is_(False))
+        .values(shipment_order_id=None, version=Order.version + 1, updated_at=utcnow())
     )
     soft_delete(order)
     session.add(order)

@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from . import models  # noqa: F401  确保建表前所有模型已注册
 from .config import settings
 from .database import checkpoint_and_dispose, create_db_and_tables, wal_checkpoint_loop
-from .routers import auth, dashboard, dbadmin, fx, items, shipment, layout, misc, plugins, staging, tags, taobao
+from .routers import auth, dashboard, dbadmin, fx, items, shipment, layout, misc, orders, plugins, staging, tags
 from .routers.plugins import scheduler_loop
 from .services.fx import fx_loop
 
@@ -57,7 +57,7 @@ app.add_middleware(
 )
 
 for r in (
-    auth.router, taobao.router, shipment.router, misc.router, items.router,
+    auth.router, orders.router, shipment.router, misc.router, items.router,
     staging.router, dashboard.router, fx.router, layout.router, tags.router, plugins.router,
     dbadmin.router,
 ):

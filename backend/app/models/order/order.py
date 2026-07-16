@@ -1,4 +1,4 @@
-"""淘宝订单（正式账本）+ 订单行。"""
+"""商品订单（正式账本）+ 订单行。"""
 
 from decimal import Decimal
 from typing import Optional
@@ -6,10 +6,13 @@ from typing import Optional
 from sqlalchemy import Column, Index, Text, text
 from sqlmodel import Field, Relationship
 
-from ..base import LedgerBase, TaobaoStatus, price_from_items
+from ..base import LedgerBase, OrderStatus, price_from_items
 
 
-class TaobaoOrder(LedgerBase, table=True):
+class Order(LedgerBase, table=True):
+    # 类名 Order → 表名显式钉为 "orders"（默认小写类名 order 是 SQL 保留字）。
+    __tablename__ = "orders"
+
     # P3: (订单号, 来源) 唯一但要兼容软删 → 部分唯一索引（仅未删且订单号非空的行）。
     # 用 COALESCE(platform,'') 参与索引：来源未填(NULL)时仍把同一订单号视为重复，
     # 堵住「无来源时重复导入同一单」的漏洞；不同来源下允许同号（如闲鱼/淘宝各一条）。
@@ -20,7 +23,7 @@ class TaobaoOrder(LedgerBase, table=True):
     # （见 app/db/dialect.py），故 MySQL 请勿对本表跑 autogenerate。
     __table_args__ = (
         Index(
-            "ix_taobaoorder_order_no_platform_active",
+            "ix_orders_order_no_platform_active",
             "order_no",
             text("COALESCE(platform, '')"),
             unique=True,
@@ -33,19 +36,19 @@ class TaobaoOrder(LedgerBase, table=True):
     shop: Optional[str] = Field(default=None, max_length=255)      # 店铺
     url: Optional[str] = Field(default=None, sa_column=Column(Text))  # 商品链接（可能很长）
     category: Optional[str] = Field(default=None, max_length=64)   # 分类
-    status: str = Field(default=TaobaoStatus.paid.value, max_length=32, index=True)
+    status: str = Field(default=OrderStatus.paid.value, max_length=32, index=True)
     platform: Optional[str] = Field(default=None, max_length=32, index=True)      # 来源平台（闲鱼/淘宝/京东）
     express_no: Optional[str] = Field(default=None, max_length=64, index=True)    # 快递号（归组用）
     express_company: Optional[str] = Field(default=None, max_length=64)           # 快递公司
-    taobao_account: Optional[str] = Field(default=None, max_length=64, index=True)  # 淘宝账号（2个）
+    platform_account: Optional[str] = Field(default=None, max_length=64, index=True)  # 平台账号（各平台的登录号，如淘宝2个）
     shipment_order_id: Optional[int] = Field(
         default=None, foreign_key="shipmentorder.id", index=True
     )  # 可空 = 已买未集运
     postage_cny: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)  # 邮费（元）；空=包邮(0)。订单价 = Σ(单价×数量) + 邮费
 
-    shipment_order: Optional["ShipmentOrder"] = Relationship(back_populates="taobao_orders")  # noqa: F821
+    shipment_order: Optional["ShipmentOrder"] = Relationship(back_populates="orders")  # noqa: F821
     items: list["OrderItem"] = Relationship(  # noqa: F821
-        back_populates="taobao_order",
+        back_populates="order",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
 

@@ -21,8 +21,8 @@ from ..models import (
     StagingItem,
     StagingStatus,
     TagOption,
-    TaobaoOrder,
-    TaobaoStaging,
+    Order,
+    OrderStaging,
     utcnow,
 )
 from ..schemas import TagIn, TagOut
@@ -31,20 +31,20 @@ router = APIRouter(
     prefix="/api/tags", tags=["tags"], dependencies=[Depends(get_current_user)]
 )
 
-_ALLOWED_FIELDS = {"taobao_account", "recipient", "platform"}
+_ALLOWED_FIELDS = {"platform_account", "recipient", "platform"}
 _N_COLORS = 10   # 与前端 TAG_PALETTE 长度一致
 
 # 每个标签字段 → 数据里承载该值的 (模型, 列)。用于把「数据里出现过的值」并入可选集。
 # 淘宝账号同时看正式订单与暂存（爬虫先写暂存，账号即时可选）；收货人看集运订单；来源看正式订单与暂存。
 _FIELD_SOURCES = {
-    "taobao_account": (
-        (TaobaoOrder, TaobaoOrder.taobao_account),
-        (TaobaoStaging, TaobaoStaging.taobao_account),
+    "platform_account": (
+        (Order, Order.platform_account),
+        (OrderStaging, OrderStaging.platform_account),
     ),
     "recipient": ((ShipmentOrder, ShipmentOrder.recipient),),
     "platform": (
-        (TaobaoOrder, TaobaoOrder.platform),
-        (TaobaoStaging, TaobaoStaging.platform),
+        (Order, Order.platform),
+        (OrderStaging, OrderStaging.platform),
     ),
 }
 
@@ -61,9 +61,9 @@ def _data_values(session: Session, field: str) -> set[str]:
         stmt = select(col).where(col.is_not(None)).distinct()
         if hasattr(model, "is_delete"):
             stmt = stmt.where(model.is_delete.is_(False))
-        if model is TaobaoStaging:
+        if model is OrderStaging:
             # 已忽略的暂存行是「看过后丢弃」的抓取结果，不算真在用（否则其账号会被误锁、误自动登记）
-            stmt = stmt.where(TaobaoStaging.status != StagingStatus.ignored.value)
+            stmt = stmt.where(OrderStaging.status != StagingStatus.ignored.value)
         for v in session.exec(stmt).all():
             if v:
                 out.add(v)
@@ -162,9 +162,17 @@ def set_tag_color(
 # --- 标签值改名：跨表迁移（数据 + 标签），供本路由的 /rename 与 plugins 路由在同一事务里复用 -------
 
 def tag_value_in_use(session: Session, field: str, name: str) -> bool:
-    """name 是否已被该标签字段占用：对应数据表（见 _FIELD_SOURCES）里有此值的行，或已登记为标签。改名前防重名用。"""
+    """name 是否已被该标签字段占用：对应数据表（见 _FIELD_SOURCES）里有此值的行，或已登记为标签。改名前防重名用。
+
+    可见性口径必须与 _data_values 一致（排除软删行 + 已忽略暂存），否则一个只存在于软删/已忽略行里的
+    「幽灵值」会误判为「在用」，把本可用的新名字挡在改名之外。"""
     for model, col in _FIELD_SOURCES.get(field, ()):
-        if session.exec(select(model.id).where(col == name).limit(1)).first() is not None:
+        stmt = select(model.id).where(col == name)
+        if hasattr(model, "is_delete"):
+            stmt = stmt.where(model.is_delete.is_(False))
+        if model is OrderStaging:
+            stmt = stmt.where(OrderStaging.status != StagingStatus.ignored.value)
+        if session.exec(stmt.limit(1)).first() is not None:
             return True
     return session.exec(
         select(TagOption).where(TagOption.field == field, TagOption.value == name)
@@ -203,39 +211,39 @@ def rename_tag_value(session: Session, field: str, old: str, new: str) -> dict:
 
 
 def delete_account_staging(session: Session, account: str) -> int:
-    """硬删某淘宝账号名下的全部暂存行（TaobaoStaging）连同其物品（StagingItem）。
+    """硬删某淘宝账号名下的全部暂存行（OrderStaging）连同其物品（StagingItem）。
     先删子表再删父表以满足外键；**不提交**，由调用方在同一事务里 commit。返回删除的暂存行数。"""
     ids = session.exec(
-        select(TaobaoStaging.id).where(TaobaoStaging.taobao_account == account)
+        select(OrderStaging.id).where(OrderStaging.platform_account == account)
     ).all()
     if ids:
         session.execute(sa_delete(StagingItem).where(StagingItem.staging_id.in_(ids)))
-        session.execute(sa_delete(TaobaoStaging).where(TaobaoStaging.id.in_(ids)))
+        session.execute(sa_delete(OrderStaging).where(OrderStaging.id.in_(ids)))
     return len(ids)
 
 
 def soft_delete_account_orders(session: Session, account: str) -> int:
-    """软删某淘宝账号名下的全部账本订单（TaobaoOrder）：is_delete=True、version/updated_at 自增
+    """软删某淘宝账号名下的全部账本订单（Order）：is_delete=True、version/updated_at 自增
     （与单条删除同语义、守乐观锁纪律）。已软删的跳过。**不提交**。返回受影响行数。
 
     对齐单条 delete_order：软删后把「由这些订单导入而来」的暂存行挂靠清掉、状态回「待处理」，
     避免暂存行永远卡在「已导入」且指向已删订单、无法重新导入（否则即数据「损耗」）。"""
     now = utcnow()
     ids = session.exec(
-        select(TaobaoOrder.id).where(
-            TaobaoOrder.taobao_account == account, TaobaoOrder.is_delete.is_(False)
+        select(Order.id).where(
+            Order.platform_account == account, Order.is_delete.is_(False)
         )
     ).all()
     if not ids:
         return 0
     session.execute(
-        sa_update(TaobaoOrder).where(TaobaoOrder.id.in_(ids))
-        .values(is_delete=True, version=TaobaoOrder.version + 1, updated_at=now)
+        sa_update(Order).where(Order.id.in_(ids))
+        .values(is_delete=True, version=Order.version + 1, updated_at=now)
     )
     session.execute(
-        sa_update(TaobaoStaging).where(TaobaoStaging.imported_taobao_order_id.in_(ids))
-        .values(imported_taobao_order_id=None, status=StagingStatus.pending.value,
-                version=TaobaoStaging.version + 1, updated_at=now)
+        sa_update(OrderStaging).where(OrderStaging.imported_order_id.in_(ids))
+        .values(imported_order_id=None, status=StagingStatus.pending.value,
+                version=OrderStaging.version + 1, updated_at=now)
     )
     return len(ids)
 
@@ -262,9 +270,9 @@ def rename_tag(
     session: Session = Depends(get_session),
 ):
     """标签改名：把用到该值的订单迁到新值、并保留标签颜色。
-    taobao_account 牵连插件磁盘会话/配置，须走插件端点（/api/plugins/taobao/account/rename），此处拒绝。"""
+    platform_account 牵连插件磁盘会话/配置，须走插件端点（/api/plugins/taobao/account/rename），此处拒绝。"""
     _check_field(field)
-    if field == "taobao_account":
+    if field == "platform_account":
         raise HTTPException(status_code=400, detail="淘宝账号改名请走插件端点（含磁盘会话/配置迁移）。")
     new = new.strip()
     if not new:

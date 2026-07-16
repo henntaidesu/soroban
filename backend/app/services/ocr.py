@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import re
 import threading
@@ -14,7 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from ..models import TaobaoStatus   # 状态枚举值的唯一真相，避免与后端漂移
+from ..models import OrderStatus   # 状态枚举值的唯一真相，避免与后端漂移
 
 # 常见快递公司：关键词 → 规范全称。按「越具体越靠前」不重要（子串命中即可），
 # 但保证能覆盖淘宝寄件常见家；命中后统一输出规范名，便于「快递公司」列做标签归组。
@@ -150,9 +151,10 @@ def _extract_date(text: str) -> Optional[str]:
     if not m:
         return None
     y, mo, d = (int(g) for g in m.groups())
-    if not (1 <= mo <= 12 and 1 <= d <= 31):
+    try:
+        return dt.date(y, mo, d).isoformat()   # 用真实日历校验，挡掉 2-31/4-31 等不存在的日期
+    except ValueError:
         return None
-    return f"{y:04d}-{mo:02d}-{d:02d}"
 
 
 def _parse_order_date(anchor: dict, tokens: list[dict], row_tol: float) -> Optional[str]:
@@ -231,14 +233,14 @@ def _detect_status(full_text: str, has_express: bool) -> str:
     """判交易状态：终态优先；发货后（头部「卖家已发货/待确认收货」或已有快递单号）→ 待收货；
     「等待卖家发货」→ 待发货；都不明确时以有无快递单号兜底（有单号必已发货）。"""
     if "交易成功" in full_text or "交易完成" in full_text:
-        return TaobaoStatus.received.value       # 交易成功
+        return OrderStatus.received.value       # 交易成功
     if "交易关闭" in full_text or "已关闭" in full_text:
-        return TaobaoStatus.cancelled.value      # 交易关闭
+        return OrderStatus.cancelled.value      # 交易关闭
     if has_express or any(k in full_text for k in ("待确认收货", "卖家已发货", "待收货", "确认收货")):
-        return TaobaoStatus.shipped.value        # 待收货
+        return OrderStatus.shipped.value        # 待收货
     if any(k in full_text for k in ("等待卖家发货", "等待发货", "待卖家发货", "待发货")):
-        return TaobaoStatus.paid.value           # 待发货
-    return TaobaoStatus.paid.value               # 兜底：待发货
+        return OrderStatus.paid.value           # 待发货
+    return OrderStatus.paid.value               # 兜底：待发货
 
 
 def _load_truck_ref():
@@ -377,7 +379,7 @@ def recognize_order(image_bytes: bytes) -> dict:
     # 交易状态：有快递单号（已发货）→ 待收货，否则待发货（另按头部状态语细分终态）
     fields["status"] = _detect_status(full, bool(fields.get("express_no")))
     # 交易成功（已完成）无需物流信息：不回填快递公司/快递号
-    if fields["status"] == TaobaoStatus.received.value:
+    if fields["status"] == OrderStatus.received.value:
         fields["express_company"] = None
         fields["express_no"] = None
     # 附带完整识别文本，便于前端在缺字段时给用户核对/手动补

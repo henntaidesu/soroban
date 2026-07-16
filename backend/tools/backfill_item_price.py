@@ -18,7 +18,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlmodel import Session, select
 
-from app.models import OrderItem, StagingItem, TaobaoOrder, TaobaoStaging
+from app.models import OrderItem, StagingItem, Order, OrderStaging
 
 _Q = Decimal("0.01")
 
@@ -55,12 +55,12 @@ def backfill(engine) -> dict:
            "staging": {"auto_item": 0, "priced_items": 0, "skip": 0},
            "shifts": []}
     with Session(engine) as s:
-        for obj in s.exec(select(TaobaoOrder)).all():       # 含软删，保证每单都有物品
+        for obj in s.exec(select(Order)).all():       # 含软删，保证每单都有物品
             r = _backfill_row(obj, OrderItem)
             rep["orders"][r["action"]] += 1
             if r["shift"]:
                 rep["shifts"].append(("order", obj.id, str(r["shift"])))
-        for obj in s.exec(select(TaobaoStaging)).all():
+        for obj in s.exec(select(OrderStaging)).all():
             r = _backfill_row(obj, StagingItem)
             rep["staging"][r["action"]] += 1
             if r["shift"]:

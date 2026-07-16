@@ -33,7 +33,7 @@
               <div class="donut-center"><span class="dc-cap">合计</span>{{ fmtJPY(m.jpy) }}</div>
             </div>
             <div class="dlegend">
-              <div class="dl-row"><i class="dot tb" /><span class="dl-k">商品（含快递）</span><span class="dl-p">{{ pct(m.taobao_jpy, m.jpy) }}</span><span class="dl-v">{{ fmtJPY(m.taobao_jpy) }}</span><span class="dl-c">{{ m.taobao_count }} 单</span></div>
+              <div class="dl-row"><i class="dot tb" /><span class="dl-k">商品（含快递）</span><span class="dl-p">{{ pct(m.order_jpy, m.jpy) }}</span><span class="dl-v">{{ fmtJPY(m.order_jpy) }}</span><span class="dl-c">{{ m.order_count }} 单</span></div>
               <div class="dl-row"><i class="dot sp" /><span class="dl-k">集运运费</span><span class="dl-p">{{ pct(m.shipment_jpy, m.jpy) }}</span><span class="dl-v">{{ fmtJPY(m.shipment_jpy) }}</span><span class="dl-c">{{ m.shipment_count }} 单</span></div>
               <div class="dl-row"><i class="dot mc" /><span class="dl-k">杂项</span><span class="dl-p">{{ pct(m.misc_jpy, m.jpy) }}</span><span class="dl-v">{{ fmtJPY(m.misc_jpy) }}</span><span class="dl-c">{{ m.misc_count }} 笔</span></div>
             </div>
@@ -52,8 +52,8 @@ import { fmtJPY } from '@/utils/money'
 
 const loading = ref(false)
 const data = reactive({
-  total_jpy: 0, taobao_jpy: 0, shipment_jpy: 0, misc_jpy: 0,
-  taobao_count: 0, shipment_count: 0, misc_count: 0, by_month: [], fx_rate: null,
+  total_jpy: 0, order_jpy: 0, shipment_jpy: 0, misc_jpy: 0,
+  order_count: 0, shipment_count: 0, misc_count: 0, by_month: [], fx_rate: null,
 })
 
 // 当前年月（按本地=JST）；本月行浅色底强调
@@ -68,14 +68,14 @@ function pct(v, total) { return total > 0 ? `${(v / total * 100).toFixed(1)}%` :
 function donutStyle(m) {
   const t = m.jpy || 0
   if (t <= 0) return { background: '#1c2740' }
-  const a = (m.taobao_jpy / t) * 100
+  const a = (m.order_jpy / t) * 100
   const b = a + (m.shipment_jpy / t) * 100
   return { background: `conic-gradient(#67C23A 0 ${a}%, #E6A23C ${a}% ${b}%, #F56C6C ${b}% 100%)` }
 }
 
 const cards = computed(() => [
   { label: '总支出', value: data.total_jpy, color: '#1890ff', sub: `汇率 1元≈${data.fx_rate ?? '—'}円` },
-  { label: '商品（含快递）', value: data.taobao_jpy, color: '#67C23A', sub: `${data.taobao_count} 单` },
+  { label: '商品（含快递）', value: data.order_jpy, color: '#67C23A', sub: `${data.order_count} 单` },
   { label: '集运运费', value: data.shipment_jpy, color: '#E6A23C', sub: `${data.shipment_count} 单` },
   { label: '杂项', value: data.misc_jpy, color: '#F56C6C', sub: `${data.misc_count} 项` },
 ])

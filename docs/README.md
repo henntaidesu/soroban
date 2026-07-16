@@ -120,6 +120,7 @@
 - [ ] 退款是否支持部分退款（金额级冲抵）还是仅整单取消
 - [ ] **对接快递单号平台查物流**：接国家/第三方快递查询平台（如快递100 / 快递鸟 / 官方接口），按淘宝「快递号」或君丰「国际运单号」自动拉物流状态并展示（可加缓存/定时刷新）。
 - [ ] **更换汇率 API**：现用 open.er-api 免费源仅约每日更新；将来换更实时/更可靠的汇率源（改 `backend/app/services/fx.py::fetch_rate`，其余持久化/兜底逻辑可复用）。
+- [ ] **SECRET_KEY 硬化**（安全审查 #18）：默认 `dev-insecure-key-change-me` 现仅启动告警、不阻断；它同时用于签 JWT **和**（经 sha256）派生加密 MySQL 密码的 Fernet 密钥——故**不能自动轮换**（换了旧的加密 DSN 就解不开）。当前绑 `127.0.0.1` 尚可；**对外/局域网暴露前必须**设强随机 `SECRET_KEY`（`python -c "import secrets;print(secrets.token_hex(32))"`）。可加：绑定非环回地址且仍是默认/弱 key 时**启动硬失败**（`backend/app/main.py` 现只 `log.warning`）。
 
 ## 待自动化（Roadmap）
 
@@ -507,3 +508,29 @@
 - **爬虫**：无需改代码——它只送物品名/数量+订单总价，后端自动折单价、标 auto。
 - **对抗审查 6 条**（6 维×逐条对抗验证）：修 5（2 HIGH：淘宝页改物品未镜像回暂存、爬虫重抓 seed=None 会把价清零；med：数量无 `ge=1` 下界→负价；low：回填对「NULL价+0物品」需 2 次收敛）；1 low（单价取整分位漂移）为单价口径固有、标 auto 复核。全 HTTP 端到端 + 回归通过。
 - **生产已上线**：迁移(加列，非破坏)+回填已应用到生效 MySQL；迁移前存全量快照作安全网；不变量验证（0 空物品单、派生价 100% 等于存储价）；本地 SQLite 同步迁移+回填。⚠️ 需**重启后端 + 重建前端**才生效。
+
+### 第四十三版：「淘宝订单」全量重命名为「商品订单」（Order）+ 账号字段 `platform_account`
+来源已支持多平台（淘宝/闲鱼/京东/拼多多/其他）、最小单位是物品，"淘宝"这一命名已不贴切。展示名早改「商品订单」，本版把**表名/方法名/变量名/接口**一并对齐；`taobao_account`→`platform_account`（账号是各平台通用概念）。
+
+命名对照（本文档以上所有 `淘宝/Taobao/taobao_*` 均为当时命名，现行代码一律用右侧）：
+
+  | 旧 | 新 |
+  |---|---|
+  | 淘宝订单（显示） | 商品订单 |
+  | `TaobaoOrder` / 表 `taobaoorder` | `Order` / 表 `orders`（类名撞 SQL 保留字 → `__tablename__="orders"`） |
+  | `TaobaoStaging` / 表 `taobaostaging` | `OrderStaging` / 表 `orderstaging` |
+  | `TaobaoStatus` / `TAOBAO_STATUS` | `OrderStatus` / `ORDER_STATUS` |
+  | `TaobaoBase/Create/Update/Read/Brief` | `OrderBase/Create/Update/Read/Brief` |
+  | `taobao_account`（列 / 接口字段 / 标签字段 / 爬虫推送） | `platform_account` |
+  | `taobao_order_id`（orderitem 外键列） | `order_id` |
+  | `imported_taobao_order_id`（暂存外键列） | `imported_order_id` |
+  | `taobao_orders`（集运→订单关系） | `orders` |
+  | 看板 `taobao_jpy` / `taobao_count` | `order_jpy` / `order_count` |
+  | `/api/taobao`（+ `/shipment/{id}/taobao/{tb}`） | `/api/orders`（+ `/shipment/{id}/order/{order}`） |
+  | `routers/taobao.py`、`models/taobao/` | `routers/orders.py`、`models/order/` |
+  | 前端 `views/Taobao`、`taobaoApi`、路由/布局键 `taobao` | `views/Orders`、`ordersApi`、`orders` |
+
+- **保留不改**（此处 "taobao" 确指淘宝平台/插件，而非订单概念）：来源值 `淘宝`；爬虫插件 id 与包名 `taobao`（`taobao_scraper` / `soroban-scraper-taobao` / `/plugins/taobao/...`）；`Source.taobao_bot`；OCR 的 `_TAOBAO_MARKERS`（识别淘宝/天猫截图）。
+- **方式**：curated 整词替换（29 文件 ~380 处，按长度排序防子串误伤）+ 显式改路径/白名单 + `git mv` 三处文件/目录。
+- **迁移 `b8c9d0e1f2a3`（跨方言）**：`RENAME TABLE/COLUMN`（MySQL 8+/SQLite 3.25+ 原生、引用它的外键自动跟随更新）；「活跃行唯一」约束（MySQL 生成列+唯一键 / SQLite 部分索引）改名前 `drop_active_unique`、改名后按新表名/新索引名 `emit_active_unique` 重建（生成列表达式只引用未改的 order_no/platform/is_delete）；普通索引 MySQL `RENAME INDEX`、SQLite `DROP+CREATE`；`columnlayout.table_name='taobao'→'orders'`、`tagoption.field='taobao_account'→'platform_account'` 两处**数据**用 `UPDATE` 迁移。含可往返 downgrade。
+- **验证**：SQLite 副本 upgrade→downgrade→upgrade 往返全绿；MySQL 克隆库 `tset_soroban_migtest`（从 `tset_soroban` 复制 schema+数据）实测全绿后 DROP；本地 `soroban.db` 与生产 `tset_soroban` 均已应用——数据 49/49/30 不变，外键重指、MySQL 生成列重建、活跃唯一仍生效、看板求和/联表/账号筛选全对；改前存全量快照（SQLite 文件 + tset_soroban 行级 dump）作安全网。**另一套 MySQL 库 `soroban`（conn#2）按用户明确要求全程未动。** ⚠️ 需**重启后端 + 重建前端**才生效。

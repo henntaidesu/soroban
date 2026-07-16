@@ -12,17 +12,17 @@ export const authApi = {
     http.post('/auth/change-password', { old_password, new_password }),
 }
 
-export const taobaoApi = {
-  list: (params) => http.get('/taobao', { params }),
-  get: (id) => http.get(`/taobao/${id}`),
-  create: (data) => http.post('/taobao', data),
-  update: (id, data) => http.patch(`/taobao/${id}`, data),
-  remove: (id) => http.delete(`/taobao/${id}`),
+export const ordersApi = {
+  list: (params) => http.get('/orders', { params }),
+  get: (id) => http.get(`/orders/${id}`),
+  create: (data) => http.post('/orders', data),
+  update: (id, data) => http.patch(`/orders/${id}`, data),
+  remove: (id) => http.delete(`/orders/${id}`),
   ocr: (file) => {
     const form = new FormData()
     form.append('file', file)
     // 首次调用要加载 OCR 模型，耗时可能超默认 15s，故单独放宽超时
-    return http.post('/taobao/ocr', form, {
+    return http.post('/orders/ocr', form, {
       headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000,
     })
   },
@@ -34,8 +34,8 @@ export const shipmentApi = {
   create: (data) => http.post('/shipment', data),
   update: (id, data) => http.patch(`/shipment/${id}`, data),
   remove: (id) => http.delete(`/shipment/${id}`),
-  attachTaobao: (shipmentId, tbId) => http.post(`/shipment/${shipmentId}/taobao/${tbId}`),
-  detachTaobao: (shipmentId, tbId) => http.delete(`/shipment/${shipmentId}/taobao/${tbId}`),
+  attachOrder: (shipmentId, orderId) => http.post(`/shipment/${shipmentId}/order/${orderId}`),
+  detachOrder: (shipmentId, orderId) => http.delete(`/shipment/${shipmentId}/order/${orderId}`),
 }
 
 export const miscApi = {
@@ -102,9 +102,9 @@ export const tagsApi = {
   add: (field, value) => http.post(`/tags/${field}`, { value }),
   remove: (field, value) => http.delete(`/tags/${field}/${encodeURIComponent(value)}`),
   setColor: (field, value, color) => http.put(`/tags/${field}/color`, null, { params: { value, color } }),
-  // 改名：taobao_account 牵连插件磁盘会话/配置 → 走插件全链路端点；其它字段走通用标签改名
+  // 改名：platform_account 牵连插件磁盘会话/配置 → 走插件全链路端点；其它字段走通用标签改名
   rename: (field, oldVal, newVal) =>
-    field === 'taobao_account'
+    field === 'platform_account'
       ? http.post(`/plugins/taobao/account/rename`, null, { params: { old: oldVal, new: newVal } })
       : http.post(`/tags/${field}/rename`, null, { params: { old: oldVal, new: newVal } }),
 }

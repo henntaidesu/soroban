@@ -11,15 +11,15 @@ from typing import Optional
 import httpx
 from sqlmodel import Session, col, select
 
-from ..config import settings
+from ..config import FX_MAX, FX_MIN, FX_QUANTUM, settings
 from ..database import get_engine
 from ..models import FxRate, utcnow
 
 log = logging.getLogger("soroban.fx")
 JST = dt.timezone(dt.timedelta(hours=9))
 ER_API = "https://open.er-api.com/v6/latest/{base}"
-_Q = Decimal("0.0001")
-_MIN, _MAX = Decimal("5"), Decimal("50")   # 合理区间，越界视为脏数据不入库
+_Q = FX_QUANTUM                 # 与手填校验共用同一量化精度（唯一真相见 config）
+_MIN, _MAX = FX_MIN, FX_MAX     # 合理区间，越界视为脏数据不入库（与 schemas 校验同源）
 
 
 async def fetch_rate(base: Optional[str] = None, quote: Optional[str] = None) -> Decimal:

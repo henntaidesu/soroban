@@ -1,20 +1,63 @@
 """Request/response schemas. Keep money as Decimal/int (P1). Validate fx range (P6)."""
 
 import datetime as dt
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import Field, SQLModel
 
-from .models import ShipmentStatus, Source, StagingStatus, TaobaoStatus
+from .config import FX_MAX, FX_MIN, FX_QUANTUM
+from .models import ShipmentStatus, Source, StagingStatus, OrderStatus
 
-FX_MIN, FX_MAX = Decimal("5"), Decimal("50")   # 1 CNY = X JPY 合理区间（P6）
+_FX_Q = FX_QUANTUM           # 汇率量化到 4 位（唯一真相见 config.FX_QUANTUM）
 _CNY_Q = Decimal("0.01")     # 人民币量化到分
-_FX_Q = Decimal("0.0001")    # 汇率量化到 4 位
+_CNY_MAX = Decimal("9999999999.99")   # Numeric(12,2) 上限：防 DB 溢出 + 防 quantize 越精度抛 InvalidOperation
+_JPY_MAX = 2_147_483_647              # 有符号 INT 上限（MySQL）：防溢出报 500
+
+
+def _q_money(v: Optional[Decimal], label: str = "金额") -> Optional[Decimal]:
+    """人民币金额：量化到分 + 非负 + 有限性/上限校验。
+    先卡有限性与量级再 quantize——否则超大/NaN 输入会让 Decimal.quantize 抛 InvalidOperation
+    （ArithmeticError，非 ValueError），Pydantic 不转 422 → 直接 500。"""
+    if v is None:
+        return None
+    v = Decimal(v)
+    if not v.is_finite() or abs(v) > _CNY_MAX:
+        raise ValueError(f"{label}数值超出可接受范围（上限 {_CNY_MAX}）")
+    v = v.quantize(_CNY_Q, rounding=ROUND_HALF_UP)
+    if v < 0:
+        raise ValueError(f"{label}不能为负数（退款/取消请用状态标记，自动不计入合计）")
+    return v
+
+
+def _q_fx(v: Optional[Decimal]) -> Optional[Decimal]:
+    """汇率：有限性 + 合理区间 + 量化到 4 位。越界或非有限一律 422。"""
+    if v is None:
+        return None
+    v = Decimal(v)
+    if not v.is_finite() or abs(v) > FX_MAX:
+        raise ValueError(f"汇率 {v} 不在合理区间 [{FX_MIN}, {FX_MAX}]（1元≈20円）")
+    v = v.quantize(_FX_Q, rounding=ROUND_HALF_UP)
+    if not (FX_MIN <= v <= FX_MAX):
+        raise ValueError(f"汇率 {v} 不在合理区间 [{FX_MIN}, {FX_MAX}]（1元≈20円）")
+    return v
+
+
+def _bounded_jpy(v: Optional[int], label: str = "金额") -> Optional[int]:
+    """直填日元(int)：非负 + 上限（防有符号 INT 溢出，MySQL 会报 Out of range → 500）。"""
+    if v is None:
+        return None
+    if v < 0:
+        raise ValueError(f"{label}不能为负数（退款/取消请用状态标记）")
+    if v > _JPY_MAX:
+        raise ValueError(f"{label}过大（上限 {_JPY_MAX}）")
+    return v
+
+
 _STAGING_STATUS = {s.value for s in StagingStatus}
 _SOURCES = {s.value for s in Source}
-_TAOBAO_STATUS = {s.value for s in TaobaoStatus}
+_ORDER_STATUS = {s.value for s in OrderStatus}
 _SHIPMENT_STATUS = {s.value for s in ShipmentStatus}
 
 
@@ -29,30 +72,17 @@ class MoneyIn(SQLModel):
     @field_validator("price_cny")
     @classmethod
     def _q_cny(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        # 量化到 2 位，保证入库值与派生日元用的是同一个数（防 >2dp 不一致）
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
-        if v < 0:
-            raise ValueError("金额不能为负数（退款/取消请用状态标记，自动不计入合计）")
-        return v
+        return _q_money(v, "金额")
 
     @field_validator("jpy_override")
     @classmethod
     def _nonneg_override(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v < 0:
-            raise ValueError("覆盖金额不能为负数（退款/取消请用状态标记）")
-        return v
+        return _bounded_jpy(v, "覆盖金额")
 
     @field_validator("fx_rate")
     @classmethod
     def _fx_range(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_FX_Q, rounding=ROUND_HALF_UP)
-        if not (FX_MIN <= v <= FX_MAX):
-            raise ValueError(f"汇率 {v} 不在合理区间 [{FX_MIN}, {FX_MAX}]（1元≈20円）")
-        return v
+        return _q_fx(v)
 
 
 class MoneyOut(SQLModel):
@@ -71,12 +101,7 @@ class PostageIn(SQLModel):
     @field_validator("postage_cny")
     @classmethod
     def _q_postage(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
-        if v < 0:
-            raise ValueError("邮费不能为负数")
-        return v
+        return _q_money(v, "邮费")
 
 
 def _check(value: str, allowed: set[str], label: str) -> str:
@@ -122,12 +147,7 @@ class ItemInBase(SQLModel):
     @field_validator("price_cny")
     @classmethod
     def _q_item_price(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
-        if v < 0:
-            raise ValueError("物品单价不能为负数")
-        return v
+        return _q_money(v, "物品单价")
 
 
 class OrderItemIn(ItemInBase):
@@ -154,23 +174,23 @@ class ItemListRead(SQLModel):
     date: dt.date
     order_no: Optional[str] = None
     shop: Optional[str] = None
-    taobao_account: Optional[str] = None
+    platform_account: Optional[str] = None
     platform: Optional[str] = None
     status: str
     express_no: Optional[str] = None
 
 
-class TaobaoBase(MoneyIn, PostageIn):
+class OrderBase(MoneyIn, PostageIn):
     date: dt.date
     order_no: Optional[str] = None
     shop: Optional[str] = None
     url: Optional[str] = None
     category: Optional[str] = None
-    status: str = TaobaoStatus.paid.value
+    status: str = OrderStatus.paid.value
     platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
-    taobao_account: Optional[str] = None
+    platform_account: Optional[str] = None
     shipment_order_id: Optional[int] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
@@ -178,14 +198,26 @@ class TaobaoBase(MoneyIn, PostageIn):
     @field_validator("status")
     @classmethod
     def _status(cls, v: str) -> str:
-        return _check(v, _TAOBAO_STATUS, "淘宝状态")
+        return _check(v, _ORDER_STATUS, "淘宝状态")
 
 
-class TaobaoCreate(TaobaoBase):
+def _check_postage_within_total(price_cny, postage_cny, items) -> None:
+    """纯种子价（无物品明细）时：邮费是订单总价的一部分，不能超过总价。否则货款被夹到 0、
+    总价被悄悄抬成 = 邮费，与用户填的总价不符 → 明确 422 拒绝（有物品明细时价格另算，不检查）。"""
+    if not items and price_cny is not None and postage_cny is not None and postage_cny > price_cny:
+        raise ValueError("邮费不能大于订单总价（订单价 = 商品单价×数量 + 邮费）")
+
+
+class OrderCreate(OrderBase):
     items: list[OrderItemIn] = []
 
+    @model_validator(mode="after")
+    def _postage_le_total(self):
+        _check_postage_within_total(self.price_cny, self.postage_cny, self.items)
+        return self
 
-class TaobaoUpdate(MoneyIn, PostageIn):
+
+class OrderUpdate(MoneyIn, PostageIn):
     version: int                                   # 乐观锁必填
     date: Optional[dt.date] = None
     order_no: Optional[str] = None
@@ -196,7 +228,7 @@ class TaobaoUpdate(MoneyIn, PostageIn):
     platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
-    taobao_account: Optional[str] = None
+    platform_account: Optional[str] = None
     shipment_order_id: Optional[int] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
@@ -205,10 +237,10 @@ class TaobaoUpdate(MoneyIn, PostageIn):
     @field_validator("status")
     @classmethod
     def _status(cls, v: Optional[str]) -> Optional[str]:
-        return v if v is None else _check(v, _TAOBAO_STATUS, "淘宝状态")
+        return v if v is None else _check(v, _ORDER_STATUS, "淘宝状态")
 
 
-class TaobaoRead(MoneyOut):
+class OrderRead(MoneyOut):
     id: int
     date: dt.date
     postage_cny: Optional[Decimal] = None
@@ -220,7 +252,7 @@ class TaobaoRead(MoneyOut):
     platform: Optional[str] = None
     express_no: Optional[str] = None
     express_company: Optional[str] = None
-    taobao_account: Optional[str] = None
+    platform_account: Optional[str] = None
     shipment_order_id: Optional[int] = None
     payer_id: Optional[int] = None
     note: Optional[str] = None
@@ -252,9 +284,7 @@ class ShipmentBase(MoneyIn):
     @field_validator("special_fee_jpy")
     @classmethod
     def _nonneg_fee(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v < 0:
-            raise ValueError("特殊费不能为负数（退款/取消请用状态标记）")
-        return v
+        return _bounded_jpy(v, "特殊费")
 
 
 class ShipmentCreate(ShipmentBase):
@@ -281,12 +311,10 @@ class ShipmentUpdate(MoneyIn):
     @field_validator("special_fee_jpy")
     @classmethod
     def _nonneg_fee(cls, v: Optional[int]) -> Optional[int]:
-        if v is not None and v < 0:
-            raise ValueError("特殊费不能为负数（退款/取消请用状态标记）")
-        return v
+        return _bounded_jpy(v, "特殊费")
 
 
-class TaobaoBrief(SQLModel):
+class OrderBrief(SQLModel):
     id: int
     order_no: Optional[str] = None
     date: dt.date
@@ -311,7 +339,7 @@ class ShipmentRead(MoneyOut):
     version: int
     created_at: dt.datetime
     updated_at: dt.datetime
-    taobao_orders: list[TaobaoBrief] = []
+    orders: list[OrderBrief] = []
 
 
 # --- 杂项 -------------------------------------------------------------------
@@ -355,20 +383,20 @@ class MiscRead(MoneyOut):
 class MonthTotal(SQLModel):
     month: str          # YYYY-MM
     jpy: int            # 当月合计（结算日元）
-    taobao_jpy: int = 0
+    order_jpy: int = 0
     shipment_jpy: int = 0
     misc_jpy: int = 0
-    taobao_count: int = 0
+    order_count: int = 0
     shipment_count: int = 0
     misc_count: int = 0
 
 
 class DashboardRead(SQLModel):
     total_jpy: int
-    taobao_jpy: int
+    order_jpy: int
     shipment_jpy: int
     misc_jpy: int
-    taobao_count: int
+    order_count: int
     shipment_count: int
     misc_count: int
     by_month: list[MonthTotal] = []
@@ -401,7 +429,7 @@ class StagingItemRead(SQLModel):
 
 class StagingBase(PostageIn):
     order_no: Optional[str] = None
-    taobao_account: Optional[str] = None
+    platform_account: Optional[str] = None
     platform: Optional[str] = None           # 来源平台（淘宝/闲鱼/京东）；导入时随单迁移到账本
     shop: Optional[str] = None
     price_cny: Optional[Decimal] = None
@@ -413,32 +441,27 @@ class StagingBase(PostageIn):
     @field_validator("price_cny")
     @classmethod
     def _q_cny(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_CNY_Q, rounding=ROUND_HALF_UP)
-        if v < 0:
-            raise ValueError("金额不能为负数（退款/取消请用状态标记，自动不计入合计）")
-        return v
+        return _q_money(v, "金额")
 
     @field_validator("fx_rate")
     @classmethod
     def _fx_range(cls, v: Optional[Decimal]) -> Optional[Decimal]:
-        if v is None:
-            return None
-        v = Decimal(v).quantize(_FX_Q, rounding=ROUND_HALF_UP)
-        if not (FX_MIN <= v <= FX_MAX):
-            raise ValueError(f"汇率 {v} 不在合理区间 [{FX_MIN}, {FX_MAX}]")
-        return v
+        return _q_fx(v)
 
     @field_validator("order_status")
     @classmethod
     def _order_status(cls, v: Optional[str]) -> Optional[str]:
-        return v if v is None else _check(v, _TAOBAO_STATUS, "订单状态")
+        return v if v is None else _check(v, _ORDER_STATUS, "订单状态")
 
 
 class StagingCreate(StagingBase):
     status: str = StagingStatus.pending.value
     items: list[StagingItemIn] = []
+
+    @model_validator(mode="after")
+    def _postage_le_total(self):
+        _check_postage_within_total(self.price_cny, self.postage_cny, self.items)
+        return self
 
 
 class StagingUpdate(StagingBase):
@@ -456,7 +479,7 @@ class StagingRead(StagingBase):
     id: int
     version: int
     status: str
-    imported_taobao_order_id: Optional[int] = None
+    imported_order_id: Optional[int] = None
     scraped_at: dt.datetime
     items: list[StagingItemRead] = []
 

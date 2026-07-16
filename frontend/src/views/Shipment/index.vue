@@ -12,14 +12,14 @@
           <el-input v-model="filters.q" placeholder="搜集运单号" clearable style="width: 150px" @change="reload" />
         </template>
 
-        <template #cell-taobao_orders="{ row }">
-          <span :class="row.taobao_orders && row.taobao_orders.length ? '' : 'ph'">{{ tbSummary(row) }}</span>
+        <template #cell-orders="{ row }">
+          <span :class="row.orders && row.orders.length ? '' : 'ph'">{{ tbSummary(row) }}</span>
         </template>
 
         <template #expand="{ row }">
           <div class="expand">
             <div class="ex-title">关联商品订单（在此点选增删；商品页「集运(点选)」列也能改）</div>
-            <el-table v-if="row.taobao_orders && row.taobao_orders.length" :data="row.taobao_orders" size="small">
+            <el-table v-if="row.orders && row.orders.length" :data="row.orders" size="small">
               <el-table-column label="下单日期" width="110">
                 <template #default="{ row: t }"><span :class="t.date ? '' : 'ph'">{{ t.date || '—' }}</span></template>
               </el-table-column>
@@ -73,14 +73,14 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { shipmentApi, taobaoApi } from '@/api'
+import { shipmentApi, ordersApi } from '@/api'
 import { SHIPMENT_STATUS } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
 const router = useRouter()
 // 点关联订单的订单号 → 跳到商品页、隔离显示该单并自动展开（用 id，兼容无订单号的单）
-function gotoOrder(t) { router.push({ path: '/taobao', query: { focus: t.id } }) }
+function gotoOrder(t) { router.push({ path: '/orders', query: { focus: t.id } }) }
 
 // 用本地时区（用户在日本=JST）的当天，而非 UTC；否则 JST 0~9 点新建会记成前一天
 const today = () => {
@@ -100,7 +100,7 @@ const columns = [
   { key: 'special_fee_jpy', label: '特殊费（円）', type: 'int', format: 'jpy', width: 110, placeholder: '关税/消费税' },
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: 110, placeholder: '实付日元' },
   { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: 110 },
-  { key: 'taobao_orders', label: '商品订单', readonly: true, minWidth: 160, expand: true },
+  { key: 'orders', label: '商品订单', readonly: true, minWidth: 160, expand: true },
 ]
 
 const rows = ref([])
@@ -162,18 +162,18 @@ function itemSummary(t) {
   return t.items.map((i) => `（${i.quantity}x）${i.name}`).join('，')
 }
 function tbSummary(row) {
-  const list = row.taobao_orders || []
+  const list = row.orders || []
   if (!list.length) return '点击添加'
   return `${list.length} 单：${list.map((t) => t.order_no || ('#' + t.id)).join('，')}`
 }
 async function loadUnassigned() {
-  const res = await taobaoApi.list({ unassigned: true, limit: 200 })
+  const res = await ordersApi.list({ unassigned: true, limit: 200 })
   unassignedOptions.value = res.items
 }
 async function attach(shipmentRow, tbId) {
   if (!tbId) return
   try {
-    const updated = await shipmentApi.attachTaobao(shipmentRow.id, tbId)
+    const updated = await shipmentApi.attachOrder(shipmentRow.id, tbId)
     Object.assign(shipmentRow, updated)
     await loadUnassigned()
     ElMessage.success('已关联')
@@ -181,7 +181,7 @@ async function attach(shipmentRow, tbId) {
 }
 async function detach(shipmentRow, tbRow) {
   try {
-    const updated = await shipmentApi.detachTaobao(shipmentRow.id, tbRow.id)
+    const updated = await shipmentApi.detachOrder(shipmentRow.id, tbRow.id)
     Object.assign(shipmentRow, updated)
     await loadUnassigned()
     ElMessage.success('已移除')

@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { ElLoading, ElMessage } from 'element-plus'
 
-// baseURL '/api'：各模块用 '/taobao' 等拼接；Vite 代理 /api → 后端。
+// baseURL '/api'：各模块用 '/orders' 等拼接；Vite 代理 /api → 后端。
 const http = axios.create({ baseURL: '/api', timeout: 15000 })
 
 // ---- 后端断连：全屏提示（单例）----

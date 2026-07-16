@@ -9,6 +9,6 @@ from ..base import utcnow
 
 
 class ColumnLayout(SQLModel, table=True):
-    table_name: str = Field(primary_key=True, max_length=32)  # taobao / shipment / misc / staging
+    table_name: str = Field(primary_key=True, max_length=32)  # orders / shipment / misc / staging
     columns_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))  # 有序 [{"key":..,"width":..}, ...]
     updated_at: dt.datetime = Field(default_factory=utcnow)

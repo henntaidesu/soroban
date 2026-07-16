@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import OrderItem, TaobaoOrder
+from ..models import OrderItem, Order
 from ..schemas import ItemListRead
 
 router = APIRouter(
@@ -28,39 +28,39 @@ def list_items(
     date_from: Optional[dt.date] = None,
     date_to: Optional[dt.date] = None,
     status: Optional[str] = None,
-    taobao_account: Optional[str] = None,
+    platform_account: Optional[str] = None,
     platform: Optional[str] = None,
     q: Optional[str] = Query(None, description="按物品名/订单号/商品搜索"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    conds = [TaobaoOrder.is_delete.is_(False)]   # 只列未软删订单的物品
+    conds = [Order.is_delete.is_(False)]   # 只列未软删订单的物品
     if date_from:
-        conds.append(TaobaoOrder.date >= date_from)
+        conds.append(Order.date >= date_from)
     if date_to:
-        conds.append(TaobaoOrder.date <= date_to)
+        conds.append(Order.date <= date_to)
     if status:
-        conds.append(TaobaoOrder.status == status)
-    if taobao_account:
-        conds.append(TaobaoOrder.taobao_account == taobao_account)
+        conds.append(Order.status == status)
+    if platform_account:
+        conds.append(Order.platform_account == platform_account)
     if platform:
-        conds.append(TaobaoOrder.platform == platform)
+        conds.append(Order.platform == platform)
     if q:
         conds.append(
             OrderItem.name.contains(q, autoescape=True)
-            | TaobaoOrder.order_no.contains(q, autoescape=True)
-            | TaobaoOrder.shop.contains(q, autoescape=True)
+            | Order.order_no.contains(q, autoescape=True)
+            | Order.shop.contains(q, autoescape=True)
         )
 
-    join = (OrderItem, TaobaoOrder.id == OrderItem.taobao_order_id)
+    join = (OrderItem, Order.id == OrderItem.order_id)
     total = session.exec(
-        select(func.count()).select_from(TaobaoOrder).join(*join).where(*conds)
+        select(func.count()).select_from(Order).join(*join).where(*conds)
     ).one()
     rows = session.exec(
-        select(OrderItem, TaobaoOrder)
-        .join(TaobaoOrder, TaobaoOrder.id == OrderItem.taobao_order_id)
+        select(OrderItem, Order)
+        .join(Order, Order.id == OrderItem.order_id)
         .where(*conds)
-        .order_by(TaobaoOrder.date.desc(), TaobaoOrder.id.desc(), OrderItem.id.asc())
+        .order_by(Order.date.desc(), Order.id.desc(), OrderItem.id.asc())
         .offset(offset)
         .limit(limit)
     ).all()
@@ -74,7 +74,7 @@ def list_items(
             id=it.id, name=it.name, quantity=it.quantity, price_cny=it.price_cny,
             amount_cny=amount, auto=it.auto,
             order_id=o.id, date=o.date, order_no=o.order_no, shop=o.shop,
-            taobao_account=o.taobao_account, platform=o.platform, status=o.status,
+            platform_account=o.platform_account, platform=o.platform, status=o.status,
             express_no=o.express_no,
         ))
     return {"items": items, "total": total}

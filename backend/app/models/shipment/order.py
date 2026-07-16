@@ -29,7 +29,7 @@ class ShipmentOrder(LedgerBase, table=True):
     special_fee_jpy: Optional[int] = Field(default=None)    # 特殊费（恒日元：关税/消费税等）
     recipient: Optional[str] = Field(default=None, max_length=128)   # 收货人（标签，从可管理集里选）
 
-    taobao_orders: list["TaobaoOrder"] = Relationship(back_populates="shipment_order")  # noqa: F821
+    orders: list["Order"] = Relationship(back_populates="shipment_order")  # noqa: F821
 
     def compute_money(self, extra_jpy: int = 0) -> None:
         # 集运 jpy_auto = round(运费×汇率) + 特殊费_日元

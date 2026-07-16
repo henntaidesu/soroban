@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <NotionTable :columns="columns" :rows="rows" :loading="loading" expandable hide-id :open-id="focusId"
-                   table-name="taobao" @save="saveCell" @add="addRow" @delete="delRow" @reload="load">
+                   table-name="orders" @save="saveCell" @add="addRow" @delete="delRow" @reload="load">
         <template #toolbar>
           <el-upload ref="ocrUpload" class="ocr-up" multiple :show-file-list="false" :auto-upload="false"
                      accept="image/*" :on-change="onOcrPick">
@@ -17,9 +17,9 @@
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" class="flt-date"
                           start-placeholder="起" end-placeholder="止" @change="reload" />
           <el-select v-model="filters.status" placeholder="状态" clearable style="width: 110px" @change="reload">
-            <el-option v-for="s in TAOBAO_STATUS" :key="s" :label="s" :value="s" />
+            <el-option v-for="s in ORDER_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.taobao_account" placeholder="账号昵称" clearable style="width: 110px" @change="reload" />
+          <el-input v-model="filters.platform_account" placeholder="账号昵称" clearable style="width: 110px" @change="reload" />
           <el-input v-model="filters.express_no" placeholder="快递号" clearable style="width: 120px" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜订单号" clearable style="width: 140px" @change="reload" />
         </template>
@@ -125,8 +125,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Camera, Check, Delete } from '@element-plus/icons-vue'
-import { shipmentApi, taobaoApi } from '@/api'
-import { TAOBAO_STATUS, statusStyle } from '@/constants'
+import { shipmentApi, ordersApi } from '@/api'
+import { ORDER_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
 import NotionTable from '@/components/NotionTable.vue'
 
@@ -140,11 +140,11 @@ const today = () => {
 const COL_W = 110
 const columns = [
   { key: 'date', label: '下单日期', type: 'date', width: COL_W },
-  { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'platform_account', label: '账号昵称', type: 'tag', field: 'platform_account', width: COL_W },
   { key: 'platform', label: '来源', type: 'tag', field: 'platform', width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
-  { key: 'status', label: '状态', type: 'select', options: TAOBAO_STATUS, width: COL_W, clearable: false },
+  { key: 'status', label: '状态', type: 'select', options: ORDER_STATUS, width: COL_W, clearable: false },
   { key: 'shipment_order_id', label: '集运订单', readonly: true, width: COL_W, placeholder: '选择' },
   { key: 'jpy_settled', label: '结算（円）', format: 'jpy', readonly: true, width: COL_W },
   { key: 'jpy_override', label: '覆盖（円）', type: 'int', format: 'jpy', width: COL_W, placeholder: '实付日元' },
@@ -161,7 +161,7 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
 const focusId = ref(null)   // 跳转定位的订单 id（?focus=）
-const filters = reactive({ range: null, status: '', taobao_account: '', express_no: '', q: '' })
+const filters = reactive({ range: null, status: '', platform_account: '', express_no: '', q: '' })
 const shipmentOptions = ref([])
 const drafts = reactive({})   // { rowId: { name, quantity } } 每行末尾的「新物品」草稿输入
 function ensureDraft(id) { if (!drafts[id]) drafts[id] = { name: '', quantity: 1, price: null } }
@@ -199,11 +199,11 @@ async function load() {
     const params = { limit: pageSize, offset: (page.value - 1) * pageSize }
     if (filters.range) { params.date_from = filters.range[0]; params.date_to = filters.range[1] }
     if (filters.status) params.status = filters.status
-    if (filters.taobao_account) params.taobao_account = filters.taobao_account
+    if (filters.platform_account) params.platform_account = filters.platform_account
     if (filters.express_no) params.express_no = filters.express_no
     if (filters.q) params.q = filters.q
     if (focusId.value) params.id = focusId.value          // 跳转定位：隔离显示该单
-    const res = await taobaoApi.list(params)
+    const res = await ordersApi.list(params)
     rows.value = res.items
     total.value = res.total
     rows.value.forEach((r) => ensureDraft(r.id))
@@ -221,7 +221,7 @@ async function loadShipment() {
 
 async function saveCell(row, key, value) {
   try {
-    const updated = await taobaoApi.update(row.id, { version: row.version, [key]: value })
+    const updated = await ordersApi.update(row.id, { version: row.version, [key]: value })
     // 不覆盖 items：展开面板里可能有尚未点「保存物品」的编辑，普通单元格保存不应清掉它
     const { items, ...rest } = updated
     Object.assign(row, rest)
@@ -237,7 +237,7 @@ async function saveItems(row) {
     .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1,
                     price_cny: itemPrice(it.price_cny), auto: !!it.auto }))
   try {
-    const updated = await taobaoApi.update(row.id, { version: row.version, items })
+    const updated = await ordersApi.update(row.id, { version: row.version, items })
     Object.assign(row, updated)   // 自动保存：静默写库，不弹提示（返回派生的订单价 + 物品）
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
@@ -250,7 +250,7 @@ function onItemEdit(row, it) { it.auto = false; saveItems(row) }
 // 邮费改动：写库并让订单价随之重算（不填=包邮）。不覆盖展开面板里未保存的物品编辑
 async function savePostage(row) {
   try {
-    const updated = await taobaoApi.update(row.id, { version: row.version, postage_cny: itemPrice(row.postage_cny) })
+    const updated = await ordersApi.update(row.id, { version: row.version, postage_cny: itemPrice(row.postage_cny) })
     const { items, ...rest } = updated
     Object.assign(row, rest)
   } catch (e) {
@@ -324,7 +324,7 @@ async function pumpOcr() {
 
 async function processOcr(file) {
   try {
-    const res = await taobaoApi.ocr(file)
+    const res = await ordersApi.ocr(file)
     if (res.reject_reason) {   // 拿错平台截图（淘宝/京东）→ 提示改用爬虫，不建单
       ElMessage.warning(`「${file.name}」${res.reject_reason}`)
       return
@@ -354,16 +354,17 @@ async function processOcr(file) {
     const created = await addRow(data)
     if (!created) return   // 新建失败（如订单号+来源重复），addRow 已给提示，不再报成功
     ElMessage.success(`已识别并新建订单 · ${ocrSummary(data)}`)
+    if (focusId.value) clearFocus()   // 若正处于「定位单条」隔离视图：新单不属于该过滤，跳回全部列表免得成幽灵行
   } catch (_) {
     // 依赖未装(503)/图片错误(400)/超时 等由 http 拦截器统一提示；不抛出，避免中断队列
   }
 }
 
-// 按订单号精确查已存在订单（q 为包含匹配，这里取完全相等的一条；软删行后端已过滤）
+// 按订单号精确查已存在订单（用后端精确 order_no 参数，不用模糊 q——否则子串命中多、真身可能被 limit 截掉致漏判重复建单）
 async function findByOrderNo(orderNo) {
   try {
-    const res = await taobaoApi.list({ q: orderNo, limit: 20 })
-    return res.items.find((r) => r.order_no === orderNo) || null
+    const res = await ordersApi.list({ order_no: orderNo, limit: 1 })
+    return res.items[0] || null
   } catch (_) { return null }
 }
 
@@ -386,7 +387,7 @@ async function mergeByOrderNo(existing, data) {
     return
   }
   try {
-    const updated = await taobaoApi.update(existing.id, patch)
+    const updated = await ordersApi.update(existing.id, patch)
     const idx = rows.value.findIndex((r) => r.id === existing.id)   // 在当前页则就地刷新
     if (idx >= 0) { const { items, ...rest } = updated; Object.assign(rows.value[idx], rest); sortRows() }
     ElMessage.success(`已按订单号匹配更新 · 订单号 ${data.order_no}${patch.date ? ' · 下单时间 ' + patch.date : ''}`)
@@ -439,8 +440,8 @@ function sortRows() {
 
 async function addRow(data = {}) {
   try {
-    // status 不写死：后端 TaobaoBase 默认「待发货」，避免枚举改名后前端残留非法值（曾用'已付'→422）
-    const created = await taobaoApi.create({ date: today(), ...data })
+    // status 不写死：后端 OrderBase 默认「待发货」，避免枚举改名后前端残留非法值（曾用'已付'→422）
+    const created = await ordersApi.create({ date: today(), ...data })
     rows.value.unshift(created)
     sortRows()                 // 按下单日期归位（OCR 可能录入历史日期，勿留在顶部）
     ensureDraft(created.id)
@@ -463,7 +464,7 @@ async function delRow(row) {
     await ElMessageBox.confirm(`删除订单 ${row.order_no || row.id}？`, '确认', { type: 'warning' })
   } catch (_) { return }
   try {
-    await taobaoApi.remove(row.id)
+    await ordersApi.remove(row.id)
     rows.value = rows.value.filter((r) => r.id !== row.id)
     delete drafts[row.id]
     total.value--
@@ -480,7 +481,7 @@ watch(() => route.query.focus, (v) => {
   page.value = 1
   load()
 }, { immediate: true })
-function clearFocus() { router.replace({ path: '/taobao', query: {} }) }
+function clearFocus() { router.replace({ path: '/orders', query: {} }) }
 
 onMounted(() => {
   loadShipment()

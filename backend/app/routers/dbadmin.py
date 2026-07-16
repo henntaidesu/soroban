@@ -129,6 +129,8 @@ def test(t: Target):
         cid = _remember(host, port, user, pw, db)
         return {"ok": True, "version": msg2, "connection_id": cid,
                 "note": f"服务器可连，但库 {db} 暂不存在（迁移时会自动创建）"}
+    # 完整驱动错误进服务端日志；回给（已登录的）用户一句可诊断的短提示（本工具仅本人用，需要它排障）。
+    log.warning("MySQL 连接测试失败 host=%s port=%s db=%s：%s", host, port, db, msg2)
     raise HTTPException(status_code=400, detail=f"连接失败：{msg2}")
 
 

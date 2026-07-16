@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from ..auth import get_current_user
 from ..database import get_session
 from ..db.dialect import is_mysql
-from ..models import EXCLUDED_STATUSES, ShipmentOrder, MiscExpense, TaobaoOrder
+from ..models import EXCLUDED_STATUSES, ShipmentOrder, MiscExpense, Order
 from ..schemas import DashboardRead, MonthTotal
 from ..services.fx import current_rate
 
@@ -60,11 +60,11 @@ def _by_month_cat(session: Session, model, has_status: bool) -> dict:
 
 @router.get("", response_model=DashboardRead)
 def dashboard(session: Session = Depends(get_session)):
-    taobao_jpy = _sum(session, TaobaoOrder, True)
+    order_jpy = _sum(session, Order, True)
     shipment_jpy = _sum(session, ShipmentOrder, True)
     misc_jpy = _sum(session, MiscExpense, False)
 
-    tb = _by_month_cat(session, TaobaoOrder, True)
+    tb = _by_month_cat(session, Order, True)
     sp = _by_month_cat(session, ShipmentOrder, True)
     mc = _by_month_cat(session, MiscExpense, False)
     by_month = []
@@ -74,16 +74,16 @@ def dashboard(session: Session = Depends(get_session)):
         x_j, x_c = mc.get(m, (0, 0))
         by_month.append(MonthTotal(
             month=m, jpy=t_j + s_j + x_j,
-            taobao_jpy=t_j, shipment_jpy=s_j, misc_jpy=x_j,
-            taobao_count=t_c, shipment_count=s_c, misc_count=x_c,
+            order_jpy=t_j, shipment_jpy=s_j, misc_jpy=x_j,
+            order_count=t_c, shipment_count=s_c, misc_count=x_c,
         ))
 
     return DashboardRead(
-        total_jpy=taobao_jpy + shipment_jpy + misc_jpy,
-        taobao_jpy=taobao_jpy,
+        total_jpy=order_jpy + shipment_jpy + misc_jpy,
+        order_jpy=order_jpy,
         shipment_jpy=shipment_jpy,
         misc_jpy=misc_jpy,
-        taobao_count=_count(session, TaobaoOrder, True),
+        order_count=_count(session, Order, True),
         shipment_count=_count(session, ShipmentOrder, True),
         misc_count=_count(session, MiscExpense, False),
         by_month=by_month,

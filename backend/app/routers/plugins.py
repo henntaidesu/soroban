@@ -13,6 +13,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import tomllib
 from pathlib import Path
 from typing import Optional
@@ -199,8 +200,31 @@ def _python(manifest: dict) -> Path:
     return manifest["_dir"] / manifest.get("python", ".venv/bin/python")
 
 
+def _reap(proc: subprocess.Popen, label: str) -> None:
+    """后台收割子进程：读取其 stdout 单行 JSON 结果并写日志（成功计数 / 失败原因都落 soroban 日志）。
+    插件约定 stdout 只吐一行 JSON（见 taobao_scraper/run.py），量小不会撑爆管道；30min 上限防挂死。"""
+    try:
+        out, err = proc.communicate(timeout=1800)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        log.warning("插件 %s 超时(30min)已终止", label)
+        return
+    except Exception as e:                                   # noqa: BLE001
+        log.warning("插件 %s 结果回收异常：%s", label, e)
+        return
+    tail = [ln for ln in (out or "").strip().splitlines() if ln.strip()]
+    result = tail[-1] if tail else "(无 stdout)"
+    if proc.returncode == 0:
+        log.info("插件 %s 完成：%s", label, result)
+    else:
+        errtail = (err or "").strip()
+        log.warning("插件 %s 失败(exit=%s)：%s%s", label, proc.returncode, result,
+                    ("｜stderr: " + errtail[-300:]) if errtail else "")
+
+
 def _launch(manifest: dict, command: str, extra: list[str], token: Optional[str] = None) -> int:
-    """子进程调插件 CLI（fire-and-forget；插件输出进它自己的日志/回灌暂存）。
+    """子进程调插件 CLI（fire-and-forget；返回 pid，后台线程收割其结果写日志）。
 
     token 走**环境变量** SOROBAN_TOKEN 下发，不进 argv——避免短期凭据出现在进程表(ps)/日志里。
     """
@@ -212,10 +236,14 @@ def _launch(manifest: dict, command: str, extra: list[str], token: Optional[str]
     try:
         proc = subprocess.Popen(
             cmd, cwd=str(manifest["_dir"]), env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            text=True, encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"启动插件失败：{e}")
+    acct = extra[1] if len(extra) >= 2 and extra[0] == "--account" else ""
+    label = f"{manifest.get('id', '?')}/{command}" + (f" [{acct}]" if acct else "")
+    threading.Thread(target=_reap, args=(proc, label), daemon=True).start()
     return proc.pid
 
 
@@ -297,6 +325,7 @@ def set_account_enabled(
 @router.post("/{plugin_id}/login")
 def login(plugin_id: str, account: str = Query(..., description="要授权登录的账号")):
     m = _find(plugin_id)
+    _state_file(m, account)   # 目录穿越校验（会话文件按此名落盘）——与 add/rename 一致，别让 account 跳出 state 目录
     return {"started": True, "pid": _launch(m, "login", ["--account", account])}
 
 
@@ -311,6 +340,7 @@ def fetch(
     cfg = session.get(PluginConfig, plugin_id)
     by_name = {a["name"]: a for a in _account_list(cfg)}
     if account:                                          # 单账号：手动抓，忽略「启用」；孤儿(磁盘授权未配置)按缺省淘宝
+        _state_file(m, account)                          # 目录穿越校验（插件按此名读会话文件）——与 login 一致
         targets = [by_name.get(account) or {"name": account, "platform": "淘宝", "enabled": True}]
     else:                                                # 全部：只抓「已启用」的配置账号
         targets = [a for a in _account_list(cfg) if a["enabled"]]
@@ -352,7 +382,7 @@ def rename_account(
     """账号改名：一次性迁移它名下的暂存/账本订单（保留标签颜色）、重命名磁盘登录会话、更新插件配置。
     只做纯改名——new 若已被占用（已有账号/数据/授权）则拒绝，不与「合并」语义混淆。"""
     m = _find(plugin_id)
-    if m.get("platform") != "taobao":                       # 账号↔taobao_account 的耦合是淘宝专属；别的插件先不支持
+    if m.get("platform") != "taobao":                       # 账号↔platform_account 的耦合是淘宝专属；别的插件先不支持
         raise HTTPException(status_code=400, detail="该插件不支持账号改名。")
     new = new.strip()
     if not new or "," in new:
@@ -360,15 +390,15 @@ def rename_account(
     _state_file(m, new)                                     # 校验 new 是合法文件名（目录穿越/非法名 → 400）
     cfg = session.get(PluginConfig, plugin_id)
     # old 有效 = 配置/磁盘里的账号，或历史数据/标签里出现过（列头改名可能改一个只存在于旧订单的账号）
-    if old not in _known_names(cfg, m) and not tag_value_in_use(session, "taobao_account", old):
+    if old not in _known_names(cfg, m) and not tag_value_in_use(session, "platform_account", old):
         raise HTTPException(status_code=404, detail=f"没有这个账号：{old}")
     if new == old:
         return {"ok": True, "unchanged": True}
-    if new in _known_names(cfg, m) or tag_value_in_use(session, "taobao_account", new):
+    if new in _known_names(cfg, m) or tag_value_in_use(session, "platform_account", new):
         raise HTTPException(status_code=409, detail=f"新名字已被占用（已有账号/数据/授权）：{new}")
     # 1) 一个事务：数据 + 标签 + 配置一起改（只改昵称，平台/启用保留）
-    raw = rename_tag_value(session, "taobao_account", old, new)
-    counts = {"staging": raw.get("TaobaoStaging", 0), "orders": raw.get("TaobaoOrder", 0)}
+    raw = rename_tag_value(session, "platform_account", old, new)
+    counts = {"staging": raw.get("OrderStaging", 0), "orders": raw.get("Order", 0)}
     accs = _account_list(cfg)
     if cfg and any(a["name"] == old for a in accs):
         for a in accs:
@@ -386,12 +416,12 @@ def rename_account(
                 "warning": "订单数据已改名，但本地登录会话重命名失败，请在新名字下重新扫码登录。"}
 
 
-def _require_taobao_account(m: dict, session: Session, account: str) -> None:
+def _require_platform_account(m: dict, session: Session, account: str) -> None:
     """校验：淘宝插件 + account 确为已知账号（配置/磁盘/历史数据里出现过）。否则 400/404。"""
     if m.get("platform") != "taobao":
         raise HTTPException(status_code=400, detail="该插件不支持按账号删除订单。")
     cfg = session.get(PluginConfig, m["id"])
-    if account not in _known_names(cfg, m) and not tag_value_in_use(session, "taobao_account", account):
+    if account not in _known_names(cfg, m) and not tag_value_in_use(session, "platform_account", account):
         raise HTTPException(status_code=404, detail=f"没有这个账号：{account}")
 
 
@@ -403,7 +433,7 @@ def delete_account_staging_ep(
 ):
     """删除该账号在「全部订单」暂存表里的所有行（含物品明细）。不动账本正式订单。"""
     m = _find(plugin_id)
-    _require_taobao_account(m, session, account)
+    _require_platform_account(m, session, account)
     n = delete_account_staging(session, account)
     session.commit()
     return {"ok": True, "deleted": n}
@@ -417,7 +447,7 @@ def delete_account_orders_ep(
 ):
     """软删该账号名下的所有账本正式淘宝订单（从账本移除、可在数据库层恢复）。不动暂存。"""
     m = _find(plugin_id)
-    _require_taobao_account(m, session, account)
+    _require_platform_account(m, session, account)
     n = soft_delete_account_orders(session, account)
     session.commit()
     return {"ok": True, "deleted": n}

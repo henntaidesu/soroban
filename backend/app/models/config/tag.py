@@ -11,6 +11,6 @@ class TagOption(SQLModel, table=True):
         Index("ix_tagoption_field_value", "field", "value", unique=True),
     )
     id: Optional[int] = Field(default=None, primary_key=True)
-    field: str = Field(max_length=32, index=True)      # 归属字段：taobao_account / recipient
+    field: str = Field(max_length=32, index=True)      # 归属字段：platform_account / recipient
     value: str = Field(max_length=128)
     color: Optional[int] = Field(default=None)   # 调色盘序号（0..N-1），建标签时分配、之后不变（稳定不撞色）

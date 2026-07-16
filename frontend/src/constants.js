@@ -1,6 +1,6 @@
 // 状态枚举（必须与后端 models.py 的枚举值一致）
 // 淘宝交易状态（对齐淘宝：待付款→待发货→待收货→交易成功 / 退款 / 交易关闭）
-export const TAOBAO_STATUS = ['待付款', '待发货', '待收货', '交易成功', '退款', '交易关闭']
+export const ORDER_STATUS = ['待付款', '待发货', '待收货', '交易成功', '退款', '交易关闭']
 export const SHIPMENT_STATUS = ['打包中', '已发出', '已签收', '已取消']
 export const STAGING_STATUS = ['待处理', '已导入', '已忽略']   // 暂存导入工作流状态
 export const ORDER_SOURCES = ['闲鱼', '淘宝', '京东', '拼多多', '其他']   // 订单来源平台（OCR 可自动识别）

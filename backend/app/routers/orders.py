@@ -10,14 +10,14 @@ from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import ShipmentOrder, OrderItem, StagingItem, StagingStatus, TaobaoOrder, TaobaoStaging, utcnow
-from ..schemas import TaobaoCreate, TaobaoRead, TaobaoUpdate
+from ..models import ShipmentOrder, OrderItem, StagingItem, StagingStatus, Order, OrderStaging, utcnow
+from ..schemas import OrderCreate, OrderRead, OrderUpdate
 from .common import build_items, conflict, guarded_bump, not_found, soft_delete
 
 _MAX_OCR_BYTES = 10 * 1024 * 1024   # 截图一般 <2MB，限 10MB 防大图拖垮识别
 
 router = APIRouter(
-    prefix="/api/taobao", tags=["taobao"], dependencies=[Depends(get_current_user)]
+    prefix="/api/orders", tags=["orders"], dependencies=[Depends(get_current_user)]
 )
 
 
@@ -29,22 +29,24 @@ def _check_shipment(session: Session, shipment_id):
             raise HTTPException(status_code=422, detail="所属集运订单不存在或已删除")
 
 
-def _mirror_to_staging(session: Session, order: TaobaoOrder, built_items) -> None:
+def _mirror_to_staging(session: Session, order: Order, built_items) -> None:
     """若此淘宝单由暂存导入而来：把账本当前的共享字段(+物品)镜像回其暂存行，保持「暂存=账本镜像」。
     否则删单/清账本会把暂存复位为待处理、再导入时用到陈旧的暂存快照，丢掉在淘宝页做的物品/价格编辑。
     built_items 为 build_items 的产物（非空才镜像物品；None=仅镜像共享字段，如只改了状态）。"""
     st = session.exec(
-        select(TaobaoStaging).where(TaobaoStaging.imported_taobao_order_id == order.id)
+        select(OrderStaging).where(OrderStaging.imported_order_id == order.id)
     ).first()
     if st is None:
         return
     st.order_date, st.order_no, st.shop = order.date, order.order_no, order.shop
-    st.taobao_account, st.platform, st.express_no = order.taobao_account, order.platform, order.express_no
+    st.platform_account, st.platform, st.express_no = order.platform_account, order.platform, order.express_no
     st.postage_cny, st.fx_rate, st.order_status = order.postage_cny, order.fx_rate, order.status
     if built_items is not None:
         st.items = [StagingItem(**d) for d in built_items]
     st.sync_from_items()
     st.updated_at = utcnow()
+    st.version = st.version + 1   # 镜像也算一次对暂存行的写：必须自增乐观锁版本，
+    #                              否则暂存页拿旧 version 保存不会 409，会用陈旧表单悄悄覆盖镜像值。
     session.add(st)
 
 
@@ -55,43 +57,46 @@ def list_orders(
     date_from: Optional[dt.date] = None,
     date_to: Optional[dt.date] = None,
     status: Optional[str] = None,
-    taobao_account: Optional[str] = None,
+    platform_account: Optional[str] = None,
     express_no: Optional[str] = None,
     shipment_order_id: Optional[int] = None,
     unassigned: Optional[bool] = Query(None, description="仅未挂靠集运的订单（供集运页点选添加）"),
-    q: Optional[str] = Query(None, description="按订单号搜索"),
+    order_no: Optional[str] = Query(None, description="按订单号精确匹配（OCR 去重用，区别于模糊 q）"),
+    q: Optional[str] = Query(None, description="按订单号搜索（子串模糊）"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    conds = [TaobaoOrder.is_delete.is_(False)]
+    conds = [Order.is_delete.is_(False)]
     if id is not None:
-        conds.append(TaobaoOrder.id == id)
+        conds.append(Order.id == id)
     if unassigned:
-        conds.append(TaobaoOrder.shipment_order_id.is_(None))
+        conds.append(Order.shipment_order_id.is_(None))
     if date_from:
-        conds.append(TaobaoOrder.date >= date_from)
+        conds.append(Order.date >= date_from)
     if date_to:
-        conds.append(TaobaoOrder.date <= date_to)
+        conds.append(Order.date <= date_to)
     if status:
-        conds.append(TaobaoOrder.status == status)
-    if taobao_account:
-        conds.append(TaobaoOrder.taobao_account == taobao_account)
+        conds.append(Order.status == status)
+    if platform_account:
+        conds.append(Order.platform_account == platform_account)
     if express_no:
-        conds.append(TaobaoOrder.express_no == express_no)
+        conds.append(Order.express_no == express_no)
     if shipment_order_id is not None:
-        conds.append(TaobaoOrder.shipment_order_id == shipment_order_id)
+        conds.append(Order.shipment_order_id == shipment_order_id)
+    if order_no:
+        conds.append(Order.order_no == order_no)   # 精确：OCR 去重靠它，不受子串 q 的 20 条上限影响
     if q:
-        conds.append(TaobaoOrder.order_no.contains(q, autoescape=True))
+        conds.append(Order.order_no.contains(q, autoescape=True))
 
-    total = session.exec(select(func.count()).select_from(TaobaoOrder).where(*conds)).one()
+    total = session.exec(select(func.count()).select_from(Order).where(*conds)).one()
     rows = session.exec(
-        select(TaobaoOrder)
+        select(Order)
         .where(*conds)
-        .order_by(TaobaoOrder.date.desc(), TaobaoOrder.id.desc())
+        .order_by(Order.date.desc(), Order.id.desc())
         .offset(offset)
         .limit(limit)
     ).all()
-    return {"items": [TaobaoRead.model_validate(r) for r in rows], "total": total}
+    return {"items": [OrderRead.model_validate(r) for r in rows], "total": total}
 
 
 @router.post("/ocr")
@@ -117,12 +122,12 @@ async def ocr_order(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("", response_model=TaobaoRead)
-def create_order(payload: TaobaoCreate, session: Session = Depends(get_session)):
+@router.post("", response_model=OrderRead)
+def create_order(payload: OrderCreate, session: Session = Depends(get_session)):
     from ..services.fx import current_rate  # 局部导入避免循环
 
     data = payload.model_dump(exclude={"items", "price_cny"})   # 订单价由物品派生，不直接落库
-    order = TaobaoOrder(**data)
+    order = Order(**data)
     _check_shipment(session, order.shipment_order_id)   # 挂靠的集运单不存在/已删 → 友好 422（而非 FK 撞库转 409）
     if order.fx_rate is None:                 # 新建时写入当天汇率
         order.fx_rate = current_rate(session)
@@ -140,23 +145,23 @@ def create_order(payload: TaobaoCreate, session: Session = Depends(get_session))
     return order
 
 
-@router.get("/{order_id}", response_model=TaobaoRead)
+@router.get("/{order_id}", response_model=OrderRead)
 def get_order(order_id: int, session: Session = Depends(get_session)):
-    order = session.get(TaobaoOrder, order_id)
+    order = session.get(Order, order_id)
     if not order or order.is_delete:
         not_found("淘宝订单")
     return order
 
 
-@router.patch("/{order_id}", response_model=TaobaoRead)
-def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depends(get_session)):
-    order = session.get(TaobaoOrder, order_id)
+@router.patch("/{order_id}", response_model=OrderRead)
+def update_order(order_id: int, payload: OrderUpdate, session: Session = Depends(get_session)):
+    order = session.get(Order, order_id)
     if not order or order.is_delete:
         not_found("淘宝订单")
-    if not guarded_bump(session, TaobaoOrder, order_id, payload.version):
+    if not guarded_bump(session, Order, order_id, payload.version):
         conflict()
     # 集运单存活校验放在 guarded_bump 之后：此时写事务已开启并持写锁，校验与写入同一事务，
-    # 闭合「校验通过 → 集运单被并发软删 → 仍挂上」的 TOCTOU（与 attach_taobao 的 EXISTS 守卫同效）。
+    # 闭合「校验通过 → 集运单被并发软删 → 仍挂上」的 TOCTOU（与 attach_order 的 EXISTS 守卫同效）。
     if "shipment_order_id" in payload.model_fields_set:
         _check_shipment(session, payload.shipment_order_id)
 
@@ -185,7 +190,7 @@ def update_order(order_id: int, payload: TaobaoUpdate, session: Session = Depend
 
 @router.delete("/{order_id}")
 def delete_order(order_id: int, session: Session = Depends(get_session)):
-    order = session.get(TaobaoOrder, order_id)
+    order = session.get(Order, order_id)
     if not order or order.is_delete:
         not_found("淘宝订单")
     soft_delete(order)
@@ -193,10 +198,10 @@ def delete_order(order_id: int, session: Session = Depends(get_session)):
     # 若此单是从暂存导入的：删除后把暂存行的挂靠清掉、状态回「待处理」，使其可重新导入
     # （对齐集运删除时清子订单外键的做法，避免暂存行永远卡在「已导入」且指向已删订单）。
     session.execute(
-        sa_update(TaobaoStaging)
-        .where(TaobaoStaging.imported_taobao_order_id == order_id)
-        .values(imported_taobao_order_id=None, status=StagingStatus.pending.value,
-                version=TaobaoStaging.version + 1, updated_at=utcnow())
+        sa_update(OrderStaging)
+        .where(OrderStaging.imported_order_id == order_id)
+        .values(imported_order_id=None, status=StagingStatus.pending.value,
+                version=OrderStaging.version + 1, updated_at=utcnow())
     )
     session.commit()
     return {"ok": True}

@@ -36,18 +36,18 @@ from app.models import (
     ShipmentOrder,
     StagingItem,
     TagOption,
-    TaobaoOrder,
-    TaobaoStaging,
+    Order,
+    OrderStaging,
     User,
 )
 
 # 按外键依赖排序：被引用的表在前。
 MIGRATION_ORDER = [
     User,           # 被 ledger.payer_id 引用
-    ShipmentOrder,  # 被 taobaoorder.shipment_order_id 引用
-    TaobaoOrder,    # 被 orderitem / taobaostaging 引用
+    ShipmentOrder,  # 被 orders.shipment_order_id 引用
+    Order,    # 被 orderitem / orderstaging 引用
     OrderItem,
-    TaobaoStaging,
+    OrderStaging,
     StagingItem,
     MiscExpense,
     FxRate,

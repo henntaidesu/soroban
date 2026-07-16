@@ -33,7 +33,7 @@ class Source(str, Enum):
     shipment_bot = "shipment_bot"
 
 
-class TaobaoStatus(str, Enum):
+class OrderStatus(str, Enum):
     unpaid = "待付款"       # 等待买家付款
     paid = "待发货"         # 买家已付款、待卖家发货
     shipped = "待收货"      # 卖家已发货
@@ -58,9 +58,9 @@ class StagingStatus(str, Enum):
 # 看板合计要排除的状态：未付款/退款/交易关闭都不计入（金额与物品仍照常显示，只是不加总）。
 # 不再用「负数行」冲抵退款——打上退款/关闭标记即自动不计入。
 EXCLUDED_STATUSES = {
-    TaobaoStatus.unpaid.value,          # 待付款：还没花钱，不计入
-    TaobaoStatus.refunded.value,        # 退款
-    TaobaoStatus.cancelled.value,       # 交易关闭
+    OrderStatus.unpaid.value,          # 待付款：还没花钱，不计入
+    OrderStatus.refunded.value,        # 退款
+    OrderStatus.cancelled.value,       # 交易关闭
     ShipmentStatus.cancelled.value,     # 集运已取消
 }
 

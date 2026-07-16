@@ -26,8 +26,8 @@ from ..models import (
     ShipmentOrder,
     StagingItem,
     TagOption,
-    TaobaoOrder,
-    TaobaoStaging,
+    Order,
+    OrderStaging,
     User,
 )
 
@@ -35,7 +35,7 @@ log = logging.getLogger("soroban.db.migrate")
 
 # 按外键依赖排序：被引用的表在前（拷贝用正序，清空用逆序）。
 MIGRATION_ORDER = [
-    User, ShipmentOrder, TaobaoOrder, OrderItem, TaobaoStaging, StagingItem,
+    User, ShipmentOrder, Order, OrderItem, OrderStaging, StagingItem,
     MiscExpense, FxRate, Setting, ColumnLayout, TagOption, PluginConfig,
 ]
 

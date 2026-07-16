@@ -1,8 +1,15 @@
 """App configuration. Reads from environment / .env (see .env.example)."""
 
+from decimal import Decimal
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 汇率合理区间 + 量化精度：**唯一真相**，手填校验(schemas)与抓取入库(services/fx)共用，
+# 避免两处各写一份而悄悄漂移（1 CNY = X JPY，X≈20）。
+FX_MIN = Decimal("5")
+FX_MAX = Decimal("50")
+FX_QUANTUM = Decimal("0.0001")
 
 
 class Settings(BaseSettings):

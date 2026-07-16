@@ -11,7 +11,7 @@
           <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 130px" @change="reload">
             <el-option v-for="s in STAGING_STATUS" :key="s" :label="s" :value="s" />
           </el-select>
-          <el-input v-model="filters.taobao_account" placeholder="账号昵称" clearable style="width: 130px" @change="reload" />
+          <el-input v-model="filters.platform_account" placeholder="账号昵称" clearable style="width: 130px" @change="reload" />
           <el-input v-model="filters.q" placeholder="搜订单号/商品" clearable style="width: 160px" @change="reload" />
         </template>
 
@@ -50,8 +50,8 @@
         </template>
 
         <template #actions="{ row }">
-          <template v-if="row.imported_taobao_order_id">
-            <el-tag :style="stagingStyle('已导入')" size="small">已导入 #{{ row.imported_taobao_order_id }}</el-tag>
+          <template v-if="row.imported_order_id">
+            <el-tag :style="stagingStyle('已导入')" size="small">已导入 #{{ row.imported_order_id }}</el-tag>
           </template>
           <template v-else>
             <el-button size="small" type="primary" @click="doImport(row)">导入</el-button>
@@ -71,18 +71,18 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { stagingApi } from '@/api'
-import { STAGING_STATUS, TAOBAO_STATUS, stagingStyle } from '@/constants'
+import { STAGING_STATUS, ORDER_STATUS, stagingStyle } from '@/constants'
 import NotionTable from '@/components/NotionTable.vue'
 
 // 默认列顺序 + 统一列宽（≈ 刚好显示日期，取整多留一点 = 110）；用户可拖动改序/改宽，改动持久化
 const COL_W = 110
 const columns = [
   { key: 'order_date', label: '下单日期', type: 'date', width: COL_W },
-  { key: 'taobao_account', label: '账号昵称', type: 'tag', field: 'taobao_account', width: COL_W },
+  { key: 'platform_account', label: '账号昵称', type: 'tag', field: 'platform_account', width: COL_W },
   { key: 'platform', label: '来源', type: 'tag', field: 'platform', width: COL_W, placeholder: '来源' },
   { key: 'shop', label: '商品', type: 'text', long: true, width: COL_W },   // 标题长：点开弹宽框看全
   { key: 'price_cny', label: '人民币（元）', format: 'cny', readonly: true, width: COL_W },   // 由物品单价×数量派生
-  { key: 'order_status', label: '订单状态', type: 'select', options: TAOBAO_STATUS, width: COL_W },
+  { key: 'order_status', label: '订单状态', type: 'select', options: ORDER_STATUS, width: COL_W },
   { key: 'items', label: '物品', readonly: true, width: COL_W, expand: true },
   { key: 'order_no', label: '订单号', type: 'text', width: COL_W, placeholder: '订单号' },
   { key: 'express_no', label: '快递号', type: 'text', width: COL_W, placeholder: '快递号' },
@@ -96,7 +96,7 @@ const total = ref(0)
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 30
-const filters = reactive({ status: '', taobao_account: '', q: '' })
+const filters = reactive({ status: '', platform_account: '', q: '' })
 
 function itemSummary(row) {
   if (!row.items || !row.items.length) return '—'
@@ -125,7 +125,7 @@ async function load() {
   try {
     const params = { limit: pageSize, offset: (page.value - 1) * pageSize }
     if (filters.status) params.status = filters.status
-    if (filters.taobao_account) params.taobao_account = filters.taobao_account
+    if (filters.platform_account) params.platform_account = filters.platform_account
     if (filters.q) params.q = filters.q
     const res = await stagingApi.list(params)
     rows.value = res.items

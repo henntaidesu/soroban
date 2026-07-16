@@ -69,6 +69,8 @@ export const pluginsApi = {
   login: (id, account) => http.post(`/plugins/${id}/login`, null, { params: { account } }),
   fetch: (id, account) => http.post(`/plugins/${id}/fetch`, null, { params: account ? { account } : {} }),
   deleteAccount: (id, account) => http.delete(`/plugins/${id}/account`, { params: { account } }),
+  renameAccount: (id, oldName, newName) =>
+    http.post(`/plugins/${id}/account/rename`, null, { params: { old: oldName, new: newName } }),
 }
 
 // 数据库迁移/切换（SQLite ↔ MySQL，双向）。target 三选一：

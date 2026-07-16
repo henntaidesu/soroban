@@ -25,6 +25,7 @@ from ..config import settings
 from ..database import get_engine, get_session
 from ..models import PluginConfig, User, utcnow
 from ..schemas import PluginConfigIn
+from .tags import rename_taobao_account, taobao_account_in_use
 
 log = logging.getLogger("soroban.plugins")
 
@@ -123,6 +124,19 @@ def _remove_account_state(manifest: dict, account: str) -> bool:
     for p in (f, f.with_name(f.name + ".tmp"), f.with_name(f"{account}.lock")):
         p.unlink(missing_ok=True)
     return existed
+
+
+def _rename_state(manifest: dict, old: str, new: str) -> bool:
+    """把磁盘登录会话 <old>.json 原子改名成 <new>.json，并清理旧的 .tmp/.lock（新名下会各自重建）。
+    返回是否真搬了会话（old 有会话才搬；new 侧占用已在上层拒绝，不会覆盖）。"""
+    of, nf = _state_file(manifest, old), _state_file(manifest, new)
+    moved = False
+    if of.is_file():
+        of.replace(nf)                                      # 同目录 os.replace，原子
+        moved = True
+    of.with_name(of.name + ".tmp").unlink(missing_ok=True)
+    of.with_name(f"{old}.lock").unlink(missing_ok=True)
+    return moved
 
 
 def _python(manifest: dict) -> Path:
@@ -237,6 +251,51 @@ def delete_account(
         session.add(cfg)
         session.commit()
     return {"ok": True, "removed_session": removed}
+
+
+@router.post("/{plugin_id}/account/rename")
+def rename_account(
+    plugin_id: str,
+    old: str = Query(..., description="原账号名"),
+    new: str = Query(..., description="新账号名（须全新、不含逗号）"),
+    session: Session = Depends(get_session),
+):
+    """账号改名：一次性迁移它名下的暂存/账本订单（保留标签颜色）、重命名磁盘登录会话、更新插件配置。
+    只做纯改名——new 若已被占用（已有账号/数据/授权）则拒绝，不与「合并」语义混淆。"""
+    m = _find(plugin_id)
+    if m.get("platform") != "taobao":                       # 账号↔taobao_account 的耦合是淘宝专属；别的插件先不支持
+        raise HTTPException(status_code=400, detail="该插件不支持账号改名。")
+    new = new.strip()
+    if not new or "," in new:
+        raise HTTPException(status_code=400, detail="新账号名不能为空、且不能含逗号（逗号是账号分隔符）。")
+    _state_file(m, new)                                     # 校验 new 是合法文件名（目录穿越/非法名 → 400）
+    cfg = session.get(PluginConfig, plugin_id)
+    if old not in _merge_accounts(cfg, m):
+        raise HTTPException(status_code=404, detail=f"该插件下没有账号：{old}")
+    if new == old:
+        return {"ok": True, "unchanged": True}
+    if new in _merge_accounts(cfg, m) or taobao_account_in_use(session, new):
+        raise HTTPException(status_code=409, detail=f"新名字已被占用（已有账号/数据/授权）：{new}")
+    # 1) 一个事务：数据 + 标签 + 配置一起改
+    counts = rename_taobao_account(session, old, new)
+    if cfg and old in _accounts(cfg):
+        try:
+            params = json.loads(cfg.params_json)
+        except Exception:
+            params = {}
+        params["accounts"] = ",".join(new if a == old else a for a in _accounts(cfg))
+        cfg.params_json = json.dumps(params, ensure_ascii=False)
+        cfg.updated_at = utcnow()
+        session.add(cfg)
+    session.commit()
+    # 2) 提交后再搬会话文件（DB 已一致；万一搬失败只影响授权显示，可在新名下重登恢复）
+    try:
+        moved = _rename_state(m, old, new)
+        return {"ok": True, "moved_session": moved, **counts}
+    except OSError as e:
+        log.warning("改名 %s→%s 后会话文件重命名失败：%s", old, new, e)
+        return {"ok": True, "moved_session": False, **counts,
+                "warning": "订单数据已改名，但本地登录会话重命名失败，请在新名字下重新扫码登录。"}
 
 
 # --- 定时调度：按每个启用插件的 schedule_minutes 周期触发 fetch --------------

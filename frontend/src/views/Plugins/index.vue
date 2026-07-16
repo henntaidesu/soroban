@@ -59,6 +59,9 @@
         <el-button size="small" link :disabled="!p.installed || !a.authorized" @click="doFetch(p, a.account)">
           抓这个号
         </el-button>
+        <el-button size="small" link @click="doRenameAccount(p, a.account)">
+          改名
+        </el-button>
         <el-button size="small" link type="danger" @click="doDeleteAccount(p, a.account)">
           删除
         </el-button>
@@ -134,6 +137,31 @@ async function doFetch(p, account) {
     await pluginsApi.fetch(p.id, account)
     ElMessage.success(account ? `已触发抓取：${account}` : '已触发抓取（全部账号）')
   } catch (_) { /* 拦截器已提示 */ }
+}
+
+async function doRenameAccount(p, account) {
+  let value
+  try {
+    const r = await ElMessageBox.prompt(
+      `给账号「${account}」改个名。会一并迁移它名下的暂存/账本订单、保留标签颜色、重命名本地登录会话。新名字须全新、不能含逗号。`,
+      '账号改名',
+      {
+        confirmButtonText: '改名', cancelButtonText: '取消', inputValue: account,
+        inputValidator: (v) => (!!v && !!v.trim() && !v.includes(',')) || '名字不能为空、且不能含逗号',
+      },
+    )
+    value = r.value.trim()
+  } catch (_) { return }   // 取消
+  if (!value || value === account) return
+  p._busy = true
+  try {
+    const res = await pluginsApi.renameAccount(p.id, account, value)
+    if (res.warning) ElMessage.warning(res.warning)
+    else ElMessage.success(`已改名为「${value}」（迁移订单：暂存 ${res.staging} / 账本 ${res.orders}）`)
+    await load()
+  } catch (_) { /* 拦截器已提示 */ } finally {
+    p._busy = false
+  }
 }
 
 async function doDeleteAccount(p, account) {

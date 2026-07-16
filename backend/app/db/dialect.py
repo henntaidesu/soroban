@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy.dialects.mysql import insert as _mysql_insert
+from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
 from sqlalchemy.engine import Connection, Dialect, Engine
 
 
@@ -36,6 +38,29 @@ def is_sqlite(bind=None) -> bool:
 
 def is_mysql(bind=None) -> bool:
     return _name(bind) in ("mysql", "mariadb")
+
+
+# --- 跨方言的幂等插入/更新（业务代码在运行期用，传 session.get_bind() 探方言）------------
+# 背景：SQLite 的 `insert(...).on_conflict_*` 只能在 SQLite 上编译，直接用会在 MySQL 上抛
+# UnsupportedCompilationError。这里按方言产出等价语句：SQLite 走 ON CONFLICT，MySQL 走
+# INSERT IGNORE / ON DUPLICATE KEY UPDATE。
+
+def insert_or_ignore(bind, table, values: dict, index_elements: list[str]):
+    """「插入；唯一键冲突则忽略」（幂等插入）。返回可 session.execute 的 statement。
+    SQLite → ON CONFLICT DO NOTHING；MySQL → INSERT IGNORE。index_elements 仅 SQLite 用（指明冲突目标）。"""
+    if is_mysql(bind):
+        return _mysql_insert(table).values(**values).prefix_with("IGNORE")
+    return _sqlite_insert(table).values(**values).on_conflict_do_nothing(index_elements=index_elements)
+
+
+def upsert(bind, table, values: dict, index_elements: list[str], update: dict):
+    """「插入；唯一键冲突则更新 update 指定的列」。返回可 session.execute 的 statement。
+    SQLite → ON CONFLICT DO UPDATE；MySQL → ON DUPLICATE KEY UPDATE。"""
+    if is_mysql(bind):
+        return _mysql_insert(table).values(**values).on_duplicate_key_update(**update)
+    return _sqlite_insert(table).values(**values).on_conflict_do_update(
+        index_elements=index_elements, set_=update
+    )
 
 
 # --- 软删/空值感知唯一约束的方言翻译（迁移里调用）---------------------------------

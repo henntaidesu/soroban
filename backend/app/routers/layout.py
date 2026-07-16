@@ -3,11 +3,11 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session
 
 from ..auth import get_current_user
 from ..database import get_session
+from ..db.dialect import upsert
 from ..models import ColumnLayout, utcnow
 from ..schemas import LayoutRead, LayoutUpdate
 
@@ -37,10 +37,10 @@ def put_layout(table_name: str, payload: LayoutUpdate, session: Session = Depend
     data = json.dumps([c.model_dump() for c in payload.columns], ensure_ascii=False)
     now = utcnow()
     # 原子 upsert，避免并发首次保存的 read-then-insert 主键冲突
-    stmt = sqlite_insert(ColumnLayout).values(
-        table_name=table_name, columns_json=data, updated_at=now
-    ).on_conflict_do_update(
-        index_elements=["table_name"], set_={"columns_json": data, "updated_at": now}
+    stmt = upsert(
+        session.get_bind(), ColumnLayout,
+        {"table_name": table_name, "columns_json": data, "updated_at": now},
+        ["table_name"], {"columns_json": data, "updated_at": now},
     )
     session.execute(stmt)
     session.commit()

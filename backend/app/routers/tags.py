@@ -9,12 +9,13 @@
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, select
 
 from ..auth import get_current_user
 from ..database import get_session
-from ..models import ShipmentOrder, StagingStatus, TagOption, TaobaoOrder, TaobaoStaging
+from ..db.dialect import insert_or_ignore
+from ..models import ShipmentOrder, StagingStatus, TagOption, TaobaoOrder, TaobaoStaging, utcnow
 from ..schemas import TagIn, TagOut
 
 router = APIRouter(
@@ -82,11 +83,10 @@ def _sync(session: Session, field: str) -> list[TagOption]:
         color = _pick_color(counts)
         counts[color] += 1
         # 原子去重插入：并发 GET/写同时首见同一新值也安全（撞唯一键则忽略，不会让 GET 抛 409）
-        session.execute(
-            sqlite_insert(TagOption)
-            .values(field=field, value=v, color=color)
-            .on_conflict_do_nothing(index_elements=["field", "value"])
-        )
+        session.execute(insert_or_ignore(
+            session.get_bind(), TagOption,
+            {"field": field, "value": v, "color": color}, ["field", "value"],
+        ))
         changed = True
     if changed:
         session.commit()
@@ -119,13 +119,52 @@ def add_tag(field: str, payload: TagIn, session: Session = Depends(get_session))
         counts = Counter(r.color for r in rows if r.color is not None)
         color = _pick_color(counts)
         # 原子去重插入：并发/重复添加都安全（撞唯一键则忽略，颜色不生效）
-        session.execute(
-            sqlite_insert(TagOption)
-            .values(field=field, value=value, color=color)
-            .on_conflict_do_nothing(index_elements=["field", "value"])
-        )
+        session.execute(insert_or_ignore(
+            session.get_bind(), TagOption,
+            {"field": field, "value": value, "color": color}, ["field", "value"],
+        ))
         session.commit()
     return _list(session, field)
+
+
+# --- 供插件「账号改名」复用：把一个淘宝账号值跨表迁移（数据+标签），供 plugins 路由在同一事务里调用 -------
+
+def taobao_account_in_use(session: Session, name: str) -> bool:
+    """name 是否已被某淘宝账号占用：暂存/账本里有该值的行，或已登记为标签。用于改名前防重名。"""
+    for model in (TaobaoStaging, TaobaoOrder):
+        if session.exec(select(model.id).where(model.taobao_account == name).limit(1)).first() is not None:
+            return True
+    return session.exec(
+        select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == name)
+    ).first() is not None
+
+
+def rename_taobao_account(session: Session, old: str, new: str) -> dict:
+    """把淘宝账号从 old 改成 new，跨表迁移（**不提交**，由调用方在同一事务里 commit）：
+      · 暂存 TaobaoStaging + 账本 TaobaoOrder 的 taobao_account，version 自增（守住乐观锁纪律）；
+      · 标签 TagOption 直接改值以**保住原颜色**（new 已有标签则合并、弃 old）。
+    返回改动行数 {staging, orders}。"""
+    now = utcnow()
+    counts = {}
+    for key, model in (("staging", TaobaoStaging), ("orders", TaobaoOrder)):
+        counts[key] = session.execute(
+            sa_update(model)
+            .where(model.taobao_account == old)
+            .values(taobao_account=new, version=model.version + 1, updated_at=now)
+        ).rowcount
+    old_tag = session.exec(
+        select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == old)
+    ).first()
+    if old_tag:
+        new_tag = session.exec(
+            select(TagOption).where(TagOption.field == "taobao_account", TagOption.value == new)
+        ).first()
+        if new_tag:                       # new 已有标签 → 合并：留 new 的颜色，删 old
+            session.delete(old_tag)
+        else:                             # 纯改名：old 标签改值，颜色不变（否则改名后颜色被重排）
+            old_tag.value = new
+            session.add(old_tag)
+    return counts
 
 
 @router.delete("/{field}/{value:path}", response_model=list[TagOut])

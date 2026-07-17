@@ -95,6 +95,7 @@ import { Camera, Check } from '@element-plus/icons-vue'
 import { shipmentApi, ordersApi, tagsApi } from '@/api'
 import { ORDER_SOURCES, ORDER_STATUS, statusStyle } from '@/constants'
 import { fmtJPY } from '@/utils/money'
+import { queueOrderWrite } from '@/utils/orderWrites'
 import NotionTable from '@/components/NotionTable.vue'
 import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
 
@@ -186,10 +187,13 @@ async function loadShipment() {
 
 async function saveCell(row, key, value) {
   try {
-    const updated = await ordersApi.update(row.id, { version: row.version, [key]: value })
-    // 不覆盖 items：展开面板里可能有尚未点「保存物品」的编辑，普通单元格保存不应清掉它
-    const { items, ...rest } = updated
-    Object.assign(row, rest)
+    // 入队串行：格子保存与展开面板/物品编辑器对同一订单的写不再并发撞 version
+    await queueOrderWrite(row.id, async () => {
+      const updated = await ordersApi.update(row.id, { version: row.version, [key]: value })
+      // 不覆盖 items：展开面板里可能有尚未点「保存物品」的编辑，普通单元格保存不应清掉它
+      const { items, ...rest } = updated
+      Object.assign(row, rest)
+    })
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning(e.response?.data?.detail || '数据已变，已刷新'); load() }
   }
@@ -291,26 +295,43 @@ function statusRank(s) { return STATUS_RANK[s] ?? -1 }
 
 // 命中同订单号：下单时间总是回填；状态仅「推进」时更新（如补上快递单号→待收货）；
 // 其余字段仅在原值为空时补齐（不覆盖已有数据）
-async function mergeByOrderNo(existing, data) {
-  const patch = { version: existing.version }
+// 命中 patch：下单时间总回填；状态仅前进；其余字段仅在原值为空时补齐（对 base 版本重算）
+function buildMergePatch(base, data) {
+  const patch = { version: base.version }
   if (data.date) patch.date = data.date
-  if (data.status && statusRank(data.status) > statusRank(existing.status)) patch.status = data.status
+  if (data.status && statusRank(data.status) > statusRank(base.status)) patch.status = data.status
   for (const k of ['platform', 'shop', 'express_company', 'express_no', 'price_cny']) {
-    const cur = existing[k]
+    const cur = base[k]
     if (data[k] != null && data[k] !== '' && (cur == null || cur === '')) patch[k] = data[k]
   }
+  return patch
+}
+
+async function mergeByOrderNo(existing, data) {
+  let base = existing
+  let patch = buildMergePatch(base, data)
   if (Object.keys(patch).length <= 1) {   // 只有 version → 无新增信息
     ElMessage.info(`订单号 ${data.order_no} 已存在，无新增信息`)
     return
   }
-  try {
-    const updated = await ordersApi.update(existing.id, patch)
-    const idx = rows.value.findIndex((r) => r.id === existing.id)   // 在当前页则就地刷新
-    if (idx >= 0) { const { items, ...rest } = updated; Object.assign(rows.value[idx], rest); sortRows() }
-    ElMessage.success(`已按订单号匹配更新 · 订单号 ${data.order_no}${patch.date ? ' · 下单时间 ' + patch.date : ''}`)
-  } catch (e) {
-    if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); load() }
+  // 若这单正被用户在别处编辑而 version 变了，OCR 补的字段不该直接丢：拉最新版本、按新状态重算 patch，再试一次。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const updated = await ordersApi.update(base.id, patch)
+      const idx = rows.value.findIndex((r) => r.id === base.id)   // 在当前页则就地刷新
+      if (idx >= 0) { const { items, ...rest } = updated; Object.assign(rows.value[idx], rest); sortRows() }
+      ElMessage.success(`已按订单号匹配更新 · 订单号 ${data.order_no}${patch.date ? ' · 下单时间 ' + patch.date : ''}`)
+      return
+    } catch (e) {
+      if (e.response?.status !== 409) return   // 非冲突：拦截器已提示
+      const fresh = await findByOrderNo(data.order_no)
+      if (!fresh) break
+      base = fresh
+      patch = buildMergePatch(base, data)
+      if (Object.keys(patch).length <= 1) return   // 并发编辑已把这些字段补齐，无需再改
+    }
   }
+  ElMessage.warning('数据已变，已刷新'); load()   // 两次仍冲突：兜底整表刷新
 }
 
 function ocrSummary(data) {

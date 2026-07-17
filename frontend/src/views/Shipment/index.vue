@@ -151,9 +151,9 @@ async function delRow(row) {
   } catch (_) { return }
   try {
     await shipmentApi.remove(row.id)
-    rows.value = rows.value.filter((r) => r.id !== row.id)
-    total.value--
     ElMessage.success('已删除')
+    if (rows.value.length === 1 && page.value > 1) page.value--   // 删掉本页最后一行 → 回上一页，避免停在空页
+    load()                                                        // 重新拉取：分页/总数与后端同步
   } catch (_) { /* 拦截器已提示 */ }
 }
 
@@ -167,8 +167,10 @@ function tbSummary(row) {
   return `${list.length} 单：${list.map((t) => t.order_no || ('#' + t.id)).join('，')}`
 }
 async function loadUnassigned() {
-  const res = await ordersApi.list({ unassigned: true, limit: 200 })
-  unassignedOptions.value = res.items
+  try {
+    const res = await ordersApi.list({ unassigned: true, limit: 200 })
+    unassignedOptions.value = res.items
+  } catch (_) { /* 拦截器已提示；避免 onMounted 里未捕获的 promise 拒绝 */ }
 }
 async function attach(shipmentRow, tbId) {
   if (!tbId) return

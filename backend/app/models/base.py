@@ -19,6 +19,8 @@ from typing import Optional
 from sqlalchemy import Text
 from sqlmodel import Field, SQLModel
 
+from ..config import CNY_MAX, JPY_MAX
+
 
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -100,7 +102,15 @@ class LedgerBase(SQLModel):
 
     def compute_money(self, extra_jpy: int = 0) -> None:
         """用 Decimal 精确重算 jpy_auto / jpy_settled。extra_jpy 供集运加特殊费。
-        先把 cny/rate 量化到入库精度，保证派生日元与最终存储/展示值一致。"""
+        先把 cny/rate 量化到入库精度，保证派生日元与最终存储/展示值一致。
+
+        单字段校验（schemas）只卡住直填列；订单/暂存的 price_cny 是 Σ(物品×数量)+邮费
+        派生而来、绕过了单字段校验，故这里对**最终**货款与派生日元再卡一次上限：越界抛
+        ValueError（main 里统一转 422），防止 Numeric(12,2)/有符号 INT 溢出与双引擎发散。"""
+        if self.price_cny is not None:
+            p = Decimal(self.price_cny)
+            if not p.is_finite() or abs(p) > CNY_MAX:
+                raise ValueError(f"货款金额超出可接受范围（上限 {CNY_MAX}）")
         if self.price_cny is not None and self.fx_rate is not None:
             cny = Decimal(self.price_cny).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             rate = Decimal(self.fx_rate).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -109,5 +119,7 @@ class LedgerBase(SQLModel):
             auto = extra_jpy
         else:
             auto = None
+        if auto is not None and abs(auto) > JPY_MAX:
+            raise ValueError(f"结算日元超出可接受范围（货款×汇率 超过 {JPY_MAX}），请降低货款或汇率")
         self.jpy_auto = auto
         self.jpy_settled = self.jpy_override if self.jpy_override is not None else auto

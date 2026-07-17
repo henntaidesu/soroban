@@ -44,6 +44,7 @@ import { reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { ordersApi } from '@/api'
+import { queueOrderWrite } from '@/utils/orderWrites'
 
 // order 必须含 id / version / items / postage_cny / shop（订单页的行 或 ordersApi.get 的结果都满足）
 const props = defineProps({ order: { type: Object, required: true } })
@@ -61,9 +62,12 @@ async function saveItems() {
     .map((it) => ({ name: it.name.trim(), quantity: Number(it.quantity) || 1,
                     price_cny: itemPrice(it.price_cny), auto: !!it.auto }))
   try {
-    const updated = await ordersApi.update(props.order.id, { version: props.order.version, items })
-    Object.assign(props.order, updated)   // 同步 version + 派生订单价 + 物品（就地更新调用方持有的对象）
-    emit('saved', updated)
+    // 整个「读 version→PATCH→回写」入队串行，避免与同订单的其它保存并发撞 version 互相 409
+    await queueOrderWrite(props.order.id, async () => {
+      const updated = await ordersApi.update(props.order.id, { version: props.order.version, items })
+      Object.assign(props.order, updated)   // 同步 version + 派生订单价 + 物品（就地更新调用方持有的对象）
+      emit('saved', updated)
+    })
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); emit('conflict') }
   }
@@ -75,10 +79,12 @@ function onItemEdit(it) { it.auto = false; saveItems() }
 // 邮费改动：写库并让订单价随之重算（不填=包邮）。不覆盖未保存的物品编辑
 async function savePostage() {
   try {
-    const updated = await ordersApi.update(props.order.id, { version: props.order.version, postage_cny: itemPrice(props.order.postage_cny) })
-    const { items, ...rest } = updated
-    Object.assign(props.order, rest)
-    emit('saved', updated)
+    await queueOrderWrite(props.order.id, async () => {
+      const updated = await ordersApi.update(props.order.id, { version: props.order.version, postage_cny: itemPrice(props.order.postage_cny) })
+      const { items, ...rest } = updated
+      Object.assign(props.order, rest)
+      emit('saved', updated)
+    })
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); emit('conflict') }
   }

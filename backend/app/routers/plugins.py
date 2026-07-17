@@ -173,6 +173,14 @@ def _state_file(manifest: dict, account: str) -> Path:
     return f
 
 
+def _check_account_name(manifest: dict, account: str) -> Path:
+    """账号名合法性统一校验：非空、不含逗号（逗号是历史 accounts 分隔符），且不穿越 state 目录。
+    add/login/fetch 共用同一把尺子，避免 login/fetch 收下 add 不允许的名字而产生孤儿会话文件。"""
+    if not account or "," in account:
+        raise HTTPException(status_code=400, detail="账号昵称不能为空、且不能含逗号。")
+    return _state_file(manifest, account)
+
+
 def _remove_account_state(manifest: dict, account: str) -> bool:
     """删该账号在 state 目录里的全部痕迹：会话 <account>.json、半成品 .tmp、文件锁 .lock。
     返回是否真的删到了登录会话（.json 是否存在过），供前端提示。"""
@@ -288,9 +296,7 @@ def add_account(
     """添加一个账号：绑定昵称 + 平台（写一次即锁定），默认启用。之后在下面列表登录授权。"""
     m = _find(plugin_id)
     name = name.strip()
-    if not name or "," in name:
-        raise HTTPException(status_code=400, detail="账号昵称不能为空、且不能含逗号。")
-    _state_file(m, name)                                # 合法文件名校验（会话文件按此名存）
+    _check_account_name(m, name)                        # 非空+无逗号+合法文件名（会话文件按此名存）
     cfg = session.get(PluginConfig, plugin_id) or PluginConfig(plugin_id=plugin_id)
     accs = _account_list(cfg)
     if any(a["name"] == name for a in accs):
@@ -325,7 +331,7 @@ def set_account_enabled(
 @router.post("/{plugin_id}/login")
 def login(plugin_id: str, account: str = Query(..., description="要授权登录的账号")):
     m = _find(plugin_id)
-    _state_file(m, account)   # 目录穿越校验（会话文件按此名落盘）——与 add/rename 一致，别让 account 跳出 state 目录
+    _check_account_name(m, account)   # 非空+无逗号+目录穿越校验——与 add 同一把尺子，别让 login 收下非法名产生孤儿会话
     return {"started": True, "pid": _launch(m, "login", ["--account", account])}
 
 
@@ -340,7 +346,7 @@ def fetch(
     cfg = session.get(PluginConfig, plugin_id)
     by_name = {a["name"]: a for a in _account_list(cfg)}
     if account:                                          # 单账号：手动抓，忽略「启用」；孤儿(磁盘授权未配置)按缺省淘宝
-        _state_file(m, account)                          # 目录穿越校验（插件按此名读会话文件）——与 login 一致
+        _check_account_name(m, account)                  # 非空+无逗号+目录穿越校验——与 add/login 一致
         targets = [by_name.get(account) or {"name": account, "platform": "淘宝", "enabled": True}]
     else:                                                # 全部：只抓「已启用」的配置账号
         targets = [a for a in _account_list(cfg) if a["enabled"]]
@@ -406,11 +412,13 @@ def rename_account(
                 a["name"] = new
         _save_accounts(session, cfg, accs)
     session.commit()
-    # 2) 提交后再搬会话文件（DB 已一致；万一搬失败只影响授权显示，可在新名下重登恢复）
+    # 2) 提交后再搬会话文件（DB 已一致；万一搬失败只影响授权显示，可在新名下重登恢复）。
+    #    old 可能是只存在于历史数据、含非法字符的账号名（此时 _state_file 会抛 HTTPException），
+    #    这类名字本就没有合法会话文件，搬移失败不该让已提交的改名反报 4xx → 一并降级为警告。
     try:
         moved = _rename_state(m, old, new)
         return {"ok": True, "moved_session": moved, **counts}
-    except OSError as e:
+    except (OSError, HTTPException) as e:
         log.warning("改名 %s→%s 后会话文件重命名失败：%s", old, new, e)
         return {"ok": True, "moved_session": False, **counts,
                 "warning": "订单数据已改名，但本地登录会话重命名失败，请在新名字下重新扫码登录。"}

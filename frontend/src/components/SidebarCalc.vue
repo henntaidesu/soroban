@@ -66,9 +66,9 @@ function onGlobalKey(e) {
   if (/^[0-9]$/.test(k) || k === '.' || k === '+' || k === '-' || k === '(' || k === ')') ins(k)
   else if (k === '*') ins('×')
   else if (k === '/') ins('÷')
-  else if (k === 'Enter' || k === '=') equals()
-  else if (k === 'Backspace') back()
-  else return                                              // 不是计算器的键 → 放行
+  else if ((k === 'Enter' || k === '=') && expr.value) equals()
+  else if (k === 'Backspace' && expr.value) back()
+  else return                       // 非计算器键，或空算式下的 Enter/Backspace → 放行，别吞按钮/链接的默认行为
   e.preventDefault()
   focusInput()
 }

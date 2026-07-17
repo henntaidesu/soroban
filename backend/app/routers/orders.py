@@ -22,10 +22,18 @@ router = APIRouter(
 
 
 def _check_shipment(session: Session, shipment_id):
-    """挂靠的集运订单必须存在且未软删（防悬空/无效外链）。"""
+    """挂靠的集运订单必须存在且未软删（防悬空/无效外链）。
+
+    用标量 SELECT 直读 DB，而非 session.get——后者命中身份映射缓存会返回加载时的旧
+    is_delete，同事务里第二次校验（create_order flush 后复核）就形同虚设。标量列查询
+    每次都发 SQL、读事务内最新状态，才能真正闭合「校验通过→集运单被并发软删→仍挂上」。"""
     if shipment_id is not None:
-        shipment = session.get(ShipmentOrder, shipment_id)
-        if not shipment or shipment.is_delete:
+        alive = session.execute(
+            select(ShipmentOrder.id).where(
+                ShipmentOrder.id == shipment_id, ShipmentOrder.is_delete.is_(False)
+            )
+        ).first()
+        if alive is None:
             raise HTTPException(status_code=422, detail="所属集运订单不存在或已删除")
 
 
@@ -115,7 +123,7 @@ async def ocr_order(file: UploadFile = File(...)):
 
     from ..services.ocr import OcrUnavailable, recognize_order
 
-    if file.content_type and not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="请上传图片文件")
     data = await file.read()
     if not data:
@@ -146,7 +154,8 @@ def create_order(payload: OrderCreate, session: Session = Depends(get_session)):
     order.sync_from_items()                   # price_cny = Σ(单价×数量) + 邮费，并重算日元
     session.add(order)
     session.flush()                           # 写入并占写锁；FK 保证集运单硬存在
-    # 同事务内复核集运单未软删（此为本事务首次读取该单、非身份映射缓存），闭合并发软删 TOCTOU
+    # flush 后复核集运单仍未软删：_check_shipment 用标量 SELECT 直读 DB（见其注释），与本次
+    # 写入同一事务，闭合「校验通过→集运单被并发软删→订单仍挂上」的 TOCTOU
     _check_shipment(session, order.shipment_order_id)
     session.commit()
     session.refresh(order)

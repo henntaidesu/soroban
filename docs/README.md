@@ -534,3 +534,18 @@
 - **方式**：curated 整词替换（29 文件 ~380 处，按长度排序防子串误伤）+ 显式改路径/白名单 + `git mv` 三处文件/目录。
 - **迁移 `b8c9d0e1f2a3`（跨方言）**：`RENAME TABLE/COLUMN`（MySQL 8+/SQLite 3.25+ 原生、引用它的外键自动跟随更新）；「活跃行唯一」约束（MySQL 生成列+唯一键 / SQLite 部分索引）改名前 `drop_active_unique`、改名后按新表名/新索引名 `emit_active_unique` 重建（生成列表达式只引用未改的 order_no/platform/is_delete）；普通索引 MySQL `RENAME INDEX`、SQLite `DROP+CREATE`；`columnlayout.table_name='taobao'→'orders'`、`tagoption.field='taobao_account'→'platform_account'` 两处**数据**用 `UPDATE` 迁移。含可往返 downgrade。
 - **验证**：SQLite 副本 upgrade→downgrade→upgrade 往返全绿；MySQL 克隆库 `tset_soroban_migtest`（从 `tset_soroban` 复制 schema+数据）实测全绿后 DROP；本地 `soroban.db` 与生产 `tset_soroban` 均已应用——数据 49/49/30 不变，外键重指、MySQL 生成列重建、活跃唯一仍生效、看板求和/联表/账号筛选全对；改前存全量快照（SQLite 文件 + tset_soroban 行级 dump）作安全网。**另一套 MySQL 库 `soroban`（conn#2）按用户明确要求全程未动。** ⚠️ 需**重启后端 + 重建前端**才生效。
+
+### 第四十四版：多智能体全项目审查（18 子系统 / 39→35 确认）+ 修复 25 处
+只读审查（每条经独立对抗性复核去误报），按风险修复；未改任何数据库、未碰 MySQL `soroban`。
+- **金额完整性**：`compute_money` 对**派生**货款/日元加上限校验（原先只卡直填列），越界抛 `ValueError`→`main` 全局转 **422**（新增 handler，与 IntegrityError→409 同风格）；`CNY_MAX/JPY_MAX` 提到 `config` 作唯一真相；物品 `quantity` 加 `le=1e6` 上限。防 Numeric(12,2)/有符号 INT 溢出（MySQL 报 500、SQLite 静默存超大数致双引擎发散）。
+- **暂存↔账本一致**：删除**已导入**暂存行 → 409（否则孤立账本单、占死唯一号无法再导入）；`ignore` 加 `imported_order_id IS NULL` 门闸，已导入不可翻「已忽略」。
+- **杂项汇率**：`create` 补当天汇率（对齐集运），修「填了人民币价没填汇率 → 静默结算成 0、不进看板」。
+- **并发/TOCTOU**：`create_order` 的 `_check_shipment` 改标量 SELECT 直读 DB（原 `session.get` 命中身份映射缓存，flush 后复核形同虚设）；前端同订单 PATCH 经 `utils/orderWrites` 串行化，消除并发保存互撞 version 丢编辑；OCR 合并 409 改「拉新版本重算 patch 重试一次」而非直接丢弃。
+- **插件账号名**：`login/fetch` 与 `add` 共用 `_check_account_name`（非空+无逗号+防目录穿越）；`rename_account` 提交后搬会话文件失败（历史非法 `old` 名）降级为警告，不再在改名成功后反报 4xx。
+- **OCR**：成交价正则允许千分位逗号（`¥1,234.50` 原只取到 `1`）；`content_type` 缺失也按非图片拒绝。
+- **标签**：`rename` strip `old`（原漏匹配→假 404）、存在性校验提到 `new==old` 短路前；`TagIn.value`/改色/改名 Query 加 `max_length=128`（防 MySQL 超长 500）。
+- **迁移健壮**：`db_migrate.copy_data` 与 `scripts/migrate_sqlite_to_mysql` 改**单事务**（中途失败整体回滚，不留半拷贝目标让 `switch` 误接受）；`alembic env.py` 离线模式取生效 url（原死用 SQLite 控制库、对 MySQL 生成错方言 DDL）。
+- **工具/爬虫**：`backfill_item_price` 种子改**货款口径**（总价−邮费），修 `sync` 重复计邮费致金额虚高（实测总价 110→110、不再 120）；爬虫 `upsert_orders` 仅**非空** items 才下推（空列表会被后端整体替换成占位、抹掉真实物品）。
+- **前端杂项**：`bcrypt` 新密码限 72 字节（防静默截断）；`NotionTable` 仅 `minWidth` 的列拖动排序/拖宽不再被写成 160；杂项/集运删末行改 `load()`（原留空页）；`Shipment.loadUnassigned` 加 try/catch；`Plugins` 加/改账号 409 显式弹后端 detail（拦截器刻意跳过 409）；数据库表单按钮 busy 期间禁用；侧栏计算器空算式下不吞全局 Enter/Backspace；`fmtCNY/JPY` 非数字降级为「—」不显 NaN。
+- **暂缓（记录待议，非本版改）**：改密码不失效历史 JWT（需给 User 加列+迁移，单用户低危）；登录计时枚举（单用户无实际价值）；爬虫 offset 翻页在并发插入下可能跳行（>500 行才触发，自愈）。
+- **验证**：后端 `import`+mapper 全绿；TestClient E2E（溢出→422、杂项补汇率→结算 2400、删/忽略已导入→409）、`compute_money`/OCR 正则/密码 72 字节/backfill 不重复计邮费 单测全过；前端 `npm run build` 通过。⚠️ 需**重启后端 + 重建前端**才生效。

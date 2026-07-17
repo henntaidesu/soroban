@@ -63,6 +63,7 @@ import { ElMessage } from 'element-plus'
 import { ordersApi } from '@/api'
 import { ORDER_SOURCES, ORDER_STATUS } from '@/constants'
 import { fmtCNY, fmtJPY } from '@/utils/money'
+import { queueOrderWrite } from '@/utils/orderWrites'
 import OrderItemsEditor from '@/components/OrderItemsEditor.vue'
 
 const props = defineProps({
@@ -81,10 +82,13 @@ const sortedShipments = computed(() =>
 async function saveField(key, value) {
   const v = value === '' ? null : value
   try {
-    const updated = await ordersApi.update(props.order.id, { version: props.order.version, [key]: v })
-    const { items, ...rest } = updated
-    Object.assign(props.order, rest)
-    emit('saved', updated)
+    // 入队串行：面板里连改多个字段（或与内嵌物品编辑器并发）不会各读旧 version 互相 409
+    await queueOrderWrite(props.order.id, async () => {
+      const updated = await ordersApi.update(props.order.id, { version: props.order.version, [key]: v })
+      const { items, ...rest } = updated
+      Object.assign(props.order, rest)
+      emit('saved', updated)
+    })
   } catch (e) {
     if (e.response?.status === 409) { ElMessage.warning('数据已变，已刷新'); emit('conflict') }
     // 其它（如 422 校验失败）：拦截器已提示，保留用户输入待修正重试

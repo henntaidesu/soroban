@@ -63,7 +63,7 @@ def _copy_table(model, src: Session, dst: Session) -> int:
     rows = src.exec(select(model)).all()
     for r in rows:
         dst.add(model(**{c: getattr(r, c) for c in cols}))
-    dst.commit()
+    dst.flush()          # 只下发本表、不提交：整轮搬完再一次性 commit，失败可整体回滚
     return len(rows)
 
 
@@ -86,11 +86,13 @@ def main() -> None:
                 sys.exit(f"目标表 {model.__tablename__} 已有数据，中止（如需重跑请先清空目标库）")
 
     total = 0
+    # 单一事务：任一表失败则整体回滚，目标库保持全空，重跑时幂等保护不会因半拷贝而卡住。
     with Session(src_engine) as src, Session(dst_engine) as dst:
         for model in MIGRATION_ORDER:
             n = _copy_table(model, src, dst)
             total += n
             print(f"  {model.__tablename__:<16} {n:>6} 行")
+        dst.commit()
     print(f"完成，共迁移 {total} 行。请抽查 MySQL 数据后再切换生产 DATABASE_URL。")
 
 

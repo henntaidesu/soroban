@@ -143,7 +143,7 @@ def add_tag(field: str, payload: TagIn, session: Session = Depends(get_session))
 @router.put("/{field}/color", response_model=list[TagOut])
 def set_tag_color(
     field: str,
-    value: str = Query(..., description="标签值"),
+    value: str = Query(..., max_length=128, description="标签值"),
     color: int = Query(..., ge=0, lt=_N_COLORS, description=f"调色盘序号 0..{_N_COLORS - 1}"),
     session: Session = Depends(get_session),
 ):
@@ -266,7 +266,7 @@ def remove_tag(field: str, value: str, session: Session = Depends(get_session)):
 def rename_tag(
     field: str,
     old: str = Query(..., description="原标签值"),
-    new: str = Query(..., description="新标签值"),
+    new: str = Query(..., max_length=128, description="新标签值"),
     session: Session = Depends(get_session),
 ):
     """标签改名：把用到该值的订单迁到新值、并保留标签颜色。
@@ -275,12 +275,13 @@ def rename_tag(
     if field == "platform_account":
         raise HTTPException(status_code=400, detail="淘宝账号改名请走插件端点（含磁盘会话/配置迁移）。")
     new = new.strip()
+    old = old.strip()                               # 存库值都是 strip 过的，old 不 strip 会漏匹配→假 404
     if not new:
         raise HTTPException(status_code=422, detail="新名字不能为空")
+    if not tag_value_in_use(session, field, old):   # 存在性校验放在 new==old 短路之前：
+        raise HTTPException(status_code=404, detail=f"没有这个标签：{old}")   # 不存在的标签即便 old==new 也应 404
     if new == old:
         return _list(session, field)
-    if not tag_value_in_use(session, field, old):
-        raise HTTPException(status_code=404, detail=f"没有这个标签：{old}")
     if tag_value_in_use(session, field, new):
         raise HTTPException(status_code=409, detail=f"新名字已被占用：{new}")
     rename_tag_value(session, field, old, new)

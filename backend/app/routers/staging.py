@@ -189,6 +189,13 @@ def delete_staging(row_id: int, session: Session = Depends(get_session)):
     row = session.get(OrderStaging, row_id)
     if not row:
         not_found("暂存记录")
+    if _linked_order(session, row) is not None:
+        # 已导入且账本单仍在：直接删暂存会孤立账本 Order（永远占死 order_no 唯一号、无法再导入）。
+        # 要求先在「商品订单」页删掉对应订单，再删此暂存，保持暂存↔账本一致。
+        raise HTTPException(
+            status_code=409,
+            detail="该记录已导入账本，请先在「商品订单」页删除对应订单，再删此暂存记录",
+        )
     session.delete(row)
     session.commit()
     return {"ok": True}
@@ -198,14 +205,19 @@ def delete_staging(row_id: int, session: Session = Depends(get_session)):
 def ignore_staging(row_id: int, session: Session = Depends(get_session)):
     # 原子标记忽略：version 在 DB 层自增（而非 Python 读-改-写），避免并发忽略/爬虫写
     # 丢失 version 自增、绕过乐观锁；与 import_staging 的原子门闸同风格。
+    # 门闸再加 imported_order_id IS NULL：已导入的行不允许翻成「已忽略」，否则状态=已忽略
+    # 却仍挂着活账本单（_read 还会覆盖显示），导致工作流状态与账本发散。
     res = session.execute(
         sa_update(OrderStaging)
-        .where(OrderStaging.id == row_id)
+        .where(OrderStaging.id == row_id, OrderStaging.imported_order_id.is_(None))
         .values(status=StagingStatus.ignored.value,
                 version=OrderStaging.version + 1, updated_at=utcnow())
     )
     if res.rowcount != 1:
-        not_found("暂存记录")
+        row = session.get(OrderStaging, row_id)     # 区分「不存在」与「已导入」
+        if row is None:
+            not_found("暂存记录")
+        raise HTTPException(status_code=409, detail="该记录已导入账本，不能忽略")
     session.commit()
     row = session.get(OrderStaging, row_id)
     return _read(session, row)

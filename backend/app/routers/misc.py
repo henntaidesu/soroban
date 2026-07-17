@@ -51,7 +51,13 @@ def list_items(
 
 @router.post("", response_model=MiscRead)
 def create_item(payload: MiscCreate, session: Session = Depends(get_session)):
+    from ..services.fx import current_rate  # 局部导入避免循环
+
     item = MiscExpense(**payload.model_dump())
+    if item.price_cny is not None and item.fx_rate is None:
+        # 有人民币价却没填汇率 → 补当天汇率（对齐集运 create）。否则 compute_money 算不出
+        # jpy_auto/jpy_settled，该笔支出会静默不计入看板合计、结算列空白。
+        item.fx_rate = current_rate(session)
     item.compute_money()
     session.add(item)
     session.commit()

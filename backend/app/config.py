@@ -11,6 +11,13 @@ FX_MIN = Decimal("5")
 FX_MAX = Decimal("50")
 FX_QUANTUM = Decimal("0.0001")
 
+# 金额上限（唯一真相；schemas 手填校验与 models.compute_money 派生校验共用）：
+# - CNY_MAX = Numeric(12,2) 上限，防人民币列溢出 + 防 quantize 越精度抛 InvalidOperation。
+# - JPY_MAX = 有符号 INT 上限，防 jpy_auto/jpy_settled 溢出（MySQL 报 Out of range → 500，
+#   SQLite 静默存超大数 → 双引擎发散）。派生日元 = 货款×汇率，故必须在 compute_money 也卡一次。
+CNY_MAX = Decimal("9999999999.99")
+JPY_MAX = 2_147_483_647
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

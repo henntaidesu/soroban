@@ -199,10 +199,11 @@ def _parse_product(tokens: list[dict], row_tol: float, price_anchor: Optional[di
 def _parse_price(anchor: dict, tokens: list[dict], row_tol: float) -> Optional[str]:
     """成交价：同一行里找带 ¥/￥ 或形如 123.45 的金额，返回数字字符串。"""
     def amount(text: str) -> Optional[str]:
-        m = re.search(r"[¥￥]\s*([0-9]+(?:\.[0-9]{1,2})?)", text)
+        # 允许千分位逗号（如 ¥1,234.50），否则会在逗号处截断只取到 "1"；捕获后去掉逗号
+        m = re.search(r"[¥￥]\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", text)
         if not m:
-            m = re.search(r"([0-9]+\.[0-9]{2})", text)   # 无货币符号时认小数金额
-        return m.group(1) if m else None
+            m = re.search(r"([0-9][0-9,]*\.[0-9]{2})", text)   # 无货币符号时认小数金额
+        return m.group(1).replace(",", "") if m else None
 
     if (a := amount(anchor["text"])):        # 标签框自身就含金额
         return a

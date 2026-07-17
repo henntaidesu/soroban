@@ -143,7 +143,10 @@ async function doAddAccount(p) {
     ElMessage.success(`已添加账号「${name}」（${platform}）`)
     p._add.name = ''
     await load()
-  } catch (_) { /* 拦截器已提示 */ } finally {
+  } catch (e) {
+    // 409（账号已存在）被 http 拦截器刻意跳过（留给页面处理），这里显式弹出后端 detail，否则静默无反馈
+    if (e.response?.status === 409) ElMessage.error(e.response?.data?.detail || '账号已存在')
+  } finally {
     p._busy = false
   }
 }
@@ -191,7 +194,10 @@ async function doRenameAccount(p, account) {
     if (res.warning) ElMessage.warning(res.warning)
     else ElMessage.success(`已改名为「${value}」（迁移订单：暂存 ${res.staging} / 账本 ${res.orders}）`)
     await load()
-  } catch (_) { /* 拦截器已提示 */ } finally {
+  } catch (e) {
+    // 409（新名字已被占用）被 http 拦截器刻意跳过，这里显式弹出后端 detail，否则静默无反馈
+    if (e.response?.status === 409) ElMessage.error(e.response?.data?.detail || '新名字已被占用')
+  } finally {
     p._busy = false
   }
 }

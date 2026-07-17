@@ -186,7 +186,9 @@ onMounted(async () => {
 function saveLayout() {
   if (!props.tableName || !layoutReady.value) return   // 布局未就绪不保存，避免用默认序覆盖已存布局
   dirtyDuringLoad = true
-  savedLayout = cols.value.map((c) => ({ key: c.key, width: Math.round(c.width || DEFAULT_COL_W) }))
+  // 只有 minWidth、没有 width 的列：持久化其 minWidth（而非默认 160），否则一拖动排序就把
+  // 这些列的宽度悄悄写成 160、并永久盖掉原本的 minWidth。
+  savedLayout = cols.value.map((c) => ({ key: c.key, width: Math.round(c.width || c.minWidth || DEFAULT_COL_W) }))
   layoutApi.save(props.tableName, savedLayout).catch(() => {})
 }
 
@@ -303,7 +305,7 @@ function startResize(e, col) {
   resizing = true
   rzCol = col
   rzX = e.clientX
-  rzW = col.width || DEFAULT_COL_W
+  rzW = col.width || col.minWidth || DEFAULT_COL_W   // 从实际渲染宽度起拖（minWidth-only 列否则会先跳到 160）
   window.addEventListener('mousemove', onResize)
   window.addEventListener('mouseup', stopResize)
 }

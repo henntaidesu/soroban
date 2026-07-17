@@ -121,6 +121,15 @@ class ChangePassword(SQLModel):
     old_password: str
     new_password: str
 
+    @field_validator("new_password")
+    @classmethod
+    def _pw_max_bytes(cls, v: str) -> str:
+        # bcrypt 只取前 72 字节，超出部分被静默忽略——设密码时就挡住，避免「只有前 72 字节生效」
+        # 的意外（按字节判：一个汉字 3 字节，故不能用 max_length 字符数）。登录侧不加此限，交给校验失败。
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("新密码过长（上限 72 字节，约 24 个汉字或 72 个英文字符）")
+        return v
+
 
 class UserRead(SQLModel):
     id: int
@@ -140,7 +149,7 @@ class ItemInBase(SQLModel):
     """物品行输入（订单/暂存共用）。price_cny=单价（元）；订单价由 Σ(单价×数量) 派生。
     auto 由客户端回传：未改动的「系统自动」项保持 True（前端灰显），用户一编辑即传 False。"""
     name: str
-    quantity: int = Field(default=1, ge=1)   # 至少 1，防负/零数量算出负订单价
+    quantity: int = Field(default=1, ge=1, le=1_000_000)   # ≥1 防负/零算出负订单价；≤1e6 防离谱数量把总价撑爆列上限
     price_cny: Optional[Decimal] = None
     auto: bool = False
 
@@ -503,7 +512,7 @@ class LayoutUpdate(SQLModel):
 # --- 标签选项（列头可管理的下拉集）------------------------------------------
 
 class TagIn(SQLModel):
-    value: str
+    value: str = Field(max_length=128)   # 与 TagOption.value 列一致，防超长在 MySQL 报 500、SQLite 静默存
 
 
 # --- 爬虫插件配置 -----------------------------------------------------------

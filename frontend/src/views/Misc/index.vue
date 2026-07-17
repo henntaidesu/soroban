@@ -84,9 +84,9 @@ async function delRow(row) {
   } catch (_) { return }
   try {
     await miscApi.remove(row.id)
-    rows.value = rows.value.filter((r) => r.id !== row.id)
-    total.value--
     ElMessage.success('已删除')
+    if (rows.value.length === 1 && page.value > 1) page.value--   // 删掉本页最后一行 → 回上一页，避免停在空页
+    load()                                                        // 重新拉取：分页/总数与后端同步
   } catch (_) { /* 拦截器已提示 */ }
 }
 

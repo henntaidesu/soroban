@@ -30,12 +30,16 @@ target_metadata = SQLModel.metadata
 
 
 def run_migrations_offline() -> None:
+    # 取「生效后」的 url（上面已把 CLI -x / database.py 程序内传入的真实 url 写进 config），
+    # 而非死用 settings.DATABASE_URL——后者恒为 SQLite 控制库，会让 `alembic upgrade --sql`
+    # 对 MySQL 目标生成 SQLite 方言 DDL、且指错库。与 run_migrations_online 保持同一 url 来源。
+    url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
     context.configure(
-        url=settings.DATABASE_URL,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=settings.DATABASE_URL.startswith("sqlite"),
+        render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -98,17 +98,20 @@ def copy_data(src_engine, dst_engine) -> dict:
     调用方须保证 dst 不是当前正在使用的库（否则会清空线上数据）。返回每表行数。"""
     counts: dict[str, int] = {}
     with Session(src_engine) as src, Session(dst_engine) as dst:
+        # 单一事务：清空 + 整表拷贝一次性提交。中途任一表失败则整体回滚，目标库退回迁移前状态，
+        # 绝不留下「前几张表已拷、后几张表还空」的半成品——否则 is_target_empty 仍会判非空、
+        # 让「切换到此库」把线上切到缺表的库上。
         # 1) 逆依赖序清空目标（子表先删，避免外键冲突）
         for model in reversed(MIGRATION_ORDER):
             dst.exec(delete(model))
-        dst.commit()
-        # 2) 正依赖序整表拷贝（父表先插）
+        # 2) 正依赖序整表拷贝（父表先插；flush 让父行在同事务内可见，满足子表外键，但不提交）
         for model in MIGRATION_ORDER:
             cols = list(model.__table__.columns.keys())
             rows = src.exec(select(model)).all()
             for r in rows:
                 dst.add(model(**{c: getattr(r, c) for c in cols}))
-            dst.commit()
+            dst.flush()
             counts[model.__tablename__] = len(rows)
             log.info("迁移 %s：%d 行", model.__tablename__, len(rows))
+        dst.commit()                      # 全部成功才一次性提交
     return counts

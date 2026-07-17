@@ -64,9 +64,10 @@
         </el-form-item>
         <el-form-item label="数据库名"><el-input v-model="form.database" placeholder="soroban" /></el-form-item>
         <el-form-item>
-          <el-button :loading="busy === 'test'" @click="onTest">测试连接并记住</el-button>
-          <el-button type="primary" :loading="busy === 'migrate'" @click="doMigrate(formTarget(), form.database)">迁移到此库</el-button>
-          <el-button type="warning" :loading="busy === 'switch'" @click="doSwitch(formTarget(), form.database)">切换到此库</el-button>
+          <!-- 任一操作进行中(busy)全部禁用：与表格行按钮同规则，杜绝迁移中又点切换的并发操作 -->
+          <el-button :disabled="!!busy" :loading="busy === 'test'" @click="onTest">测试连接并记住</el-button>
+          <el-button type="primary" :disabled="!!busy" :loading="busy === 'migrate'" @click="doMigrate(formTarget(), form.database)">迁移到此库</el-button>
+          <el-button type="warning" :disabled="!!busy" :loading="busy === 'switch'" @click="doSwitch(formTarget(), form.database)">切换到此库</el-button>
         </el-form-item>
       </el-form>
     </el-card>

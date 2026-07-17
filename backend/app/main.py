@@ -75,6 +75,15 @@ async def _integrity_handler(request: Request, exc: IntegrityError):
     )
 
 
+@app.exception_handler(ValueError)
+async def _value_error_handler(request: Request, exc: ValueError):
+    # 业务层校验（如 compute_money 的金额上限）抛的 ValueError → 干净的 422，而非 500。
+    # 注意：请求体解析阶段的 pydantic 校验走 RequestValidationError，不经这里；这里只兜住
+    # 逃逸到 ASGI 层的 ValueError。仍记日志，避免把真正的代码 bug 悄悄伪装成「输入错误」。
+    log.warning("ValueError on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
 @app.get("/api/health", tags=["health"])
 def health():
     return {"ok": True}

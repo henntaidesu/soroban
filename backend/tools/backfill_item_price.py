@@ -26,14 +26,19 @@ _Q = Decimal("0.01")
 def _backfill_row(obj, item_cls) -> dict:
     """回填单个订单/暂存行。返回 {action, shift}。"""
     items = list(obj.items)
+    # 种子一律用「货款」= 订单价 - 邮费：sync_from_items 会再加一次邮费，若种子含邮费则重复计
+    # （对齐 routers/common.build_items 各站点的 seed_goods 口径）。夹到 ≥0，绝不落负单价。
+    goods = Decimal(obj.price_cny or 0) - Decimal(obj.postage_cny or 0)
+    if goods < 0:
+        goods = Decimal("0.00")
     if not items:
         # price 用 0.00 而非 None（订单价 NULL 时）→ 二次运行时该物品已有价，走 skip，保证幂等
-        seed = obj.price_cny if obj.price_cny is not None else Decimal("0.00")
+        seed = goods if obj.price_cny is not None else Decimal("0.00")
         obj.items = [item_cls(name=(obj.shop or "未命名物品")[:255], quantity=1,
                               price_cny=seed, auto=True)]
         action = "auto_item"
     elif all(it.price_cny is None for it in items):
-        total = Decimal(obj.price_cny or 0)
+        total = goods
         for i, it in enumerate(items):
             if i == 0:
                 q = it.quantity or 1
